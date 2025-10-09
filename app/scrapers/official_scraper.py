@@ -4,6 +4,7 @@ from typing import List, Optional
 from app.scrapers.browser_use_scraper import BrowserUseScraper
 from app.scrapers.models import OfficialInfoOutput
 from app.models.attraction import OfficialInfo, XHSNote
+from app.models.prompts import OfficialPrompts
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -48,63 +49,11 @@ class OfficialScraper(BrowserUseScraper):
         logger.info(f"从小红书笔记中收集到 {len(collected_links)} 个链接")
         logger.debug(f"收集的链接: {collected_links[:5]}")
 
-        # 构建AI任务
+        # 使用提示词模型生成任务
         if collected_links:
-            task = f"""
-任务：查找并提取"{attraction_name}"的官方信息
-
-已知信息：
-小红书用户提供的可能的官方链接：
-{chr(10).join(['- ' + link for link in collected_links[:5]])}
-
-具体步骤：
-1. 首先验证上述链接，找到真正的官方网站
-2. 如果上述链接都不是官网，则使用百度或Google搜索"{attraction_name} 官网"
-3. 访问官方网站
-4. 提取以下信息：
-   - 官方网站URL
-   - 开放时间/营业时间
-   - 门票价格（成人票、学生票、儿童票等）
-   - 预订方式（网上预订、现场购票、公众号预约等）
-   - 详细地址
-   - 联系电话
-   - 景点简介/描述
-
-重要提示：
-- 确保访问的是官方网站，而不是旅游平台
-- 如果官网信息不全，可以访问景点的微信公众号或官方小程序
-- 返回结构化的JSON数据
-"""
+            task = OfficialPrompts.get_official_info_with_links_task(attraction_name, collected_links)
         else:
-            task = f"""
-任务：查找并提取"{attraction_name}"的官方信息
-
-具体步骤：
-1. 访问百度搜索 https://www.baidu.com
-2. 等待页面加载(2-3秒)
-3. 在搜索框输入："{attraction_name} 官网"
-4. 点击搜索或按回车
-5. 等待搜索结果加载
-6. 识别官方网站（优先选择.gov.cn或包含景点名称的域名）
-7. 点击进入官方网站
-8. 等待官网加载完成
-9. 提取以下信息：
-   - 官方网站URL
-   - 开放时间/营业时间
-   - 门票价格（成人票、学生票、儿童票等）
-   - 预订方式（网上预订、现场购票、公众号预约等）
-   - 详细地址
-   - 联系电话
-   - 景点简介/描述
-
-重要提示：
-- 像真实用户一样操作，每步之间留有间隔
-- 优先选择.gov.cn或景点官方域名
-- 避免打开第三方旅游平台（如携程、美团、去哪儿等）
-- 如果遇到弹窗或广告，先关闭它们
-- 如果百度不可用，可以尝试使用Bing搜索
-- 返回结构化的JSON数据
-"""
+            task = OfficialPrompts.get_official_info_without_links_task(attraction_name)
 
         # 使用AI执行爬取
         logger.info("📍 STEP 2: 调用Browser-Use AI执行官网信息爬取")

@@ -40,7 +40,7 @@ class DestinationGuide(BaseModel):
     """目的地旅游攻略（Browser-Use AI 返回的数据结构）"""
     recommended_attractions: List[AttractionRecommendation] = Field(description="推荐景点列表")
     status: str = Field(description="执行状态（success/captcha/login）")
-
+    msg: str = Field(description="执行信息描述")
 
 # ==================== 官网相关模型 ====================
 

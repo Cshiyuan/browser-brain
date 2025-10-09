@@ -6,6 +6,7 @@ from datetime import datetime
 from app.scrapers.browser_use_scraper import BrowserUseScraper
 from app.scrapers.models import XHSNotesCollection, DestinationGuide
 from app.models.attraction import XHSNote
+from app.models.prompts import XHSPrompts
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -13,30 +14,6 @@ logger = setup_logger(__name__)
 
 class XHSScraper(BrowserUseScraper):
     """基于Browser-Use的小红书AI爬虫"""
-
-    async def _handle_manual_intervention(
-        self,
-        message: str,
-        wait_seconds: int = 60,
-        prompt_interval: int = 10
-    ):
-        """
-        通用人工介入处理：暂停等待用户手动完成操作
-
-        Args:
-            message: 提示消息
-            wait_seconds: 等待时间（秒），默认60秒
-            prompt_interval: 提示间隔（秒），默认10秒
-        """
-        logger.warning(message)
-        logger.info(f"⏳ 系统将在 {wait_seconds} 秒后自动继续...")
-
-        # 定期提示剩余时间
-        for remaining in range(wait_seconds, 0, -prompt_interval):
-            logger.info(f"⏱️  剩余等待时间: {remaining} 秒")
-            await asyncio.sleep(min(prompt_interval, remaining))
-
-        logger.info("✅ 等待结束，继续执行任务...")
 
     async def search_attraction(self, attraction_name: str, max_notes: int = 5) -> List[XHSNote]:
         """
@@ -53,78 +30,40 @@ class XHSScraper(BrowserUseScraper):
         logger.info(f"目标景点: {attraction_name}, 目标笔记数: {max_notes}")
         logger.info(f"📍 STEP 1: 准备小红书搜索任务 | attraction={attraction_name}, max_notes={max_notes}")
 
-        # 构建AI任务描述
-        task = f"""
-任务：在小红书搜索"{attraction_name}"相关的旅游笔记
+        # 使用提示词模型生成任务
+        task = XHSPrompts.search_attraction_task(attraction_name, max_notes)
 
-具体步骤：
-1. 访问小红书网站 https://www.xiaohongshu.com
-2. 等待页面完全加载(3-5秒)
-3. 在搜索框中输入关键词："{attraction_name}"
-4. 点击搜索或按回车键
-5. 等待搜索结果加载完成
-6. 浏览搜索结果，找到前{max_notes}篇相关笔记
-7. 对于每篇笔记，提取以下信息：
-   - 笔记标题
-   - 作者名称
-   - 笔记正文内容（尽可能完整）
-   - 点赞数、收藏数、评论数
-   - 笔记中的图片URL（前3张）
-   - 提取笔记中提到的URL链接（特别是官网、预订、门票相关链接）
-   - 识别关键词（如：官网、官方网站、预订、门票、开放时间等）
+        # 简单重试逻辑：最多尝试2次
+        max_retries = 2
+        for attempt in range(max_retries):
+            logger.info(f"📍 STEP 2: 调用Browser-Use AI执行小红书爬取（尝试 {attempt + 1}/{max_retries}）")
+            result = await self.scrape_with_task(
+                task=task,
+                output_model=XHSNotesCollection,
+                max_steps=30
+            )
 
-重要提示：
-- 像真实用户一样操作，每步之间留有间隔
-- 优先选择点赞数和收藏数较高的笔记
-- 如果遇到登录要求，直接停留在登录页面等待（不要尝试跳过或关闭登录窗口，系统会自动检测并暂停等待人工登录）
-- 遇到验证码时，停留在验证码页面（系统会自动检测并暂停等待人工处理）
-- 如果遇到任何弹窗或引导，先关闭它们
-- 返回结构化的JSON数据
-"""
+            # 检查是否成功
+            if result["status"] == "success" and result.get("is_successful"):
+                break
 
-        # 使用AI执行爬取
-        logger.info("📍 STEP 2: 调用Browser-Use AI执行小红书爬取")
-        result = await self.scrape_with_task(
-            task=task,
-            output_model=XHSNotesCollection,
-            max_steps=30  # 小红书需要多步操作
-        )
+            # 检测登录/验证码（简化版）
+            visited_urls = result.get("urls", [])
+            needs_login = any("login" in url.lower() for url in visited_urls)
+            needs_captcha = any("captcha" in url.lower() for url in visited_urls)
 
-        # 检测是否遇到验证码或登录要求
-        if result["status"] == "success" and result.get("urls"):
-            visited_urls = result["urls"]
-
-            # 检查是否访问了验证码页面
-            if any("captcha" in url.lower() for url in visited_urls):
-                await self._handle_manual_intervention(
-                    "⚠️  检测到验证码，请在浏览器窗口中完成验证码验证",
-                    wait_seconds=60,
-                    prompt_interval=10
-                )
-                logger.info("🔄 重新尝试执行爬取任务...")
-                result = await self.scrape_with_task(
-                    task=task,
-                    output_model=XHSNotesCollection,
-                    max_steps=30
-                )
-
-            # 检查是否访问了登录页面
-            elif any("login" in url.lower() or "signin" in url.lower() for url in visited_urls):
-                await self._handle_manual_intervention(
-                    "🔐 检测到登录要求，请在浏览器窗口中完成登录操作",
-                    wait_seconds=120,
-                    prompt_interval=15
-                )
-                logger.info("🔄 重新尝试执行爬取任务...")
-                result = await self.scrape_with_task(
-                    task=task,
-                    output_model=XHSNotesCollection,
-                    max_steps=30
-                )
+            if needs_login or needs_captcha:
+                wait_msg = "🔐 检测到登录要求" if needs_login else "⚠️  检测到验证码"
+                logger.warning(f"{wait_msg}，请在浏览器中完成操作")
+                logger.info("⏳ 等待120秒后自动重试...")
+                await asyncio.sleep(120)
+            elif attempt < max_retries - 1:
+                logger.warning("⏳ 等待5秒后重试...")
+                await asyncio.sleep(5)
 
         logger.info(f"📍 STEP 3: 处理AI返回结果 | status={result['status']}")
 
-        if result["status"] != "success":
+        if result["status"] != "success" or not result.get("is_successful"):
             logger.error(f"❌ AI爬取小红书失败: {result.get('error', 'Unknown error')}")
             logger.error(f"执行步骤数: {result.get('steps', 0)}, 访问的URL: {result.get('urls', [])}")
             return []
@@ -178,71 +117,35 @@ class XHSScraper(BrowserUseScraper):
         logger.info(f"目的地: {destination}, 目标景点数: {max_attractions}")
         logger.info(f"📍 STEP 1: 准备目的地攻略搜索任务 | destination={destination}")
 
-        # 构建AI任务描述
-        task = f"""
-任务：在小红书搜索"{destination}旅游攻略"或"{destination}必去景点"，提取推荐景点列表
+        # 使用提示词模型生成任务
+        task = XHSPrompts.search_destination_guide_task(destination, max_attractions)
 
-具体步骤：
-1. 访问小红书网站 https://www.xiaohongshu.com/search_result?keyword={destination}旅游攻略 和 https://www.xiaohongshu.com/search_result?keyword={destination}必去景点
-2. 等待页面完全加载(3-5秒)
-3. 浏览前5-10篇高赞攻略笔记
-4. 从这些攻略笔记中提取：
-   - 提到的景点名称（如"故宫"、"长城"、"颐和园"等）
-   - 推荐理由（为什么推荐这个景点）
-   - 优先级（根据笔记中的描述判断，如"必去"=5，"推荐"=4，"可选"=3）
-5. 提取最多{max_attractions}个景点
-
-重要提示：
-- 优先选择点赞数和收藏数较高的攻略笔记
-- 如果遇到登录要求，直接停留在登录页面等待（不要尝试跳过或关闭登录窗口，status返回login）
-- 遇到验证码时，停留在验证码页面（不要尝试跳过或关闭登录窗口，status返回captcha）
-- 返回结构化的JSON数据
-"""
-
-        # 使用AI执行爬取
-        logger.info("📍 STEP 2: 调用Browser-Use AI执行目的地攻略爬取")
-        result = await self.scrape_with_task(
-            task=task,
-            output_model=DestinationGuide,
-            max_steps=30
-        )
-
-        # 步骤3: 处理返回数据（scrape_with_task已自动转换为Pydantic对象）
-        guide_data = result["data"]  # ← 已经是 DestinationGuide 对象
-
-        # 检测是否遇到验证码或登录要求（通过status字段）
-        if  guide_data.status == "captcha":
-            await self._handle_manual_intervention(
-                "⚠️  检测到验证码，请在浏览器窗口中完成验证码验证",
-                wait_seconds=60,
-                prompt_interval=10
-            )
-            logger.info("🔄 重新尝试执行爬取任务...")
+        # 简单重试逻辑
+        max_retries = 2
+        for attempt in range(max_retries):
+            logger.info(f"📍 STEP 2: 调用Browser-Use AI执行目的地攻略爬取（尝试 {attempt + 1}/{max_retries}）")
             result = await self.scrape_with_task(
                 task=task,
                 output_model=DestinationGuide,
                 max_steps=30
             )
 
-        # 检查是否访问了登录页面
-        if  guide_data.status == "login":
-            await self._handle_manual_intervention(
-                "🔐 检测到登录要求，请在浏览器窗口中完成登录操作",
-                wait_seconds=120,
-                prompt_interval=15
-            )
-            logger.info("🔄 重新尝试执行爬取任务...")
-            result = await self.scrape_with_task(
-                task=task,
-                output_model=DestinationGuide,
-                max_steps=30
-            )
+            if result["status"] == "success" and result.get("is_successful"):
+                break
+
+            if attempt < max_retries - 1:
+                logger.warning("⏳ 等待5秒后重试...")
+                await asyncio.sleep(5)
 
         logger.info(f"📍 STEP 3: 处理AI返回结果 | status={result['status']}")
 
-        if result["status"] != "success":
+        if result["status"] != "success" or not result.get("is_successful"):
             logger.error(f"❌ AI爬取目的地攻略失败: {result.get('error', 'Unknown error')}")
-            logger.error(f"执行步骤数: {result.get('steps', 0)}, 访问的URL: {result.get('urls', [])}")
+            return []
+
+        guide_data = result["data"]
+        if not guide_data:
+            logger.error("❌ AI未返回任何数据")
             return []
 
         logger.info(f"AI成功返回 {len(guide_data.recommended_attractions)} 个推荐景点")

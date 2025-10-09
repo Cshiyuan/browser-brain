@@ -1,31 +1,26 @@
 """基于Browser-Use的AI驱动爬虫基类"""
 import asyncio
 from typing import Optional, List, Any
-from pathlib import Path
 from browser_use import Agent, BrowserSession, BrowserProfile, ChatGoogle
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel
 from app.utils.logger import setup_logger
+from app.models.prompts import SystemPrompts
 from config.settings import settings
 
 logger = setup_logger(__name__)
-
-# Fast Agent速度优化提示词
-SPEED_OPTIMIZATION_PROMPT = """
-Speed optimization instructions:
-- Be extremely concise and direct in your responses
-- Get to the goal as quickly as possible
-- Use multi-action sequences whenever possible to reduce steps
-- Minimize thinking time and focus on action execution
-"""
 
 
 class BrowserUseScraper:
     """Browser-Use AI驱动的爬虫基类"""
 
-   ### 定义变量应该使用类型注解
-    def __init__(self, headless: bool = None, fast_mode: bool = False, keep_alive: bool = False):
+    def __init__(
+        self,
+        headless: bool = None,
+        fast_mode: bool = False,
+        keep_alive: bool = False
+    ):
         """
         初始化Browser-Use爬虫
 
@@ -39,14 +34,18 @@ class BrowserUseScraper:
         self.keep_alive = keep_alive
         self.llm = self._initialize_llm()
         self.browser_session: Optional[BrowserSession] = None
+
+        logger.info(f"📍 STEP 3: 创建浏览器会话 | headless={self.headless}")
+        logger.info(f"   🌐 正在启动浏览器...")
         self.browser_profile = self._create_browser_profile()
+        self.browser_session = BrowserSession(
+            browser_profile=self.browser_profile
+        )
+        self.browser_session.start()
+        logger.info("   ✓ 浏览器会话创建成功")
 
-        self.current_agent: Optional[Agent] = None  # 用于任务链式执行
-
-        if self.keep_alive:
-            logger.info("🔗 Keep-Alive模式已启用：浏览器会话将保持活跃")
-
-    def _initialize_llm(self):
+    @staticmethod
+    def _initialize_llm():
         """初始化LLM"""
         logger.info("📍 STEP 1: 初始化LLM配置")
         provider = settings.LLM_PROVIDER.lower()
@@ -69,7 +68,9 @@ class BrowserUseScraper:
                 raise ValueError("ANTHROPIC_API_KEY not set in environment")
             logger.info(f"✓ 使用 Anthropic Claude: {model}")
             return ChatAnthropic(
-                model=model,
+                stop=[],
+                model_name=model,
+                timeout=None,
                 api_key=settings.ANTHROPIC_API_KEY
             )
         else:  # default to OpenAI
@@ -81,6 +82,7 @@ class BrowserUseScraper:
                 model=model,
                 api_key=settings.OPENAI_API_KEY
             )
+
 
     def _create_browser_profile(self) -> BrowserProfile:
         """创建模拟真实用户的浏览器配置（增强反检测）"""
@@ -131,13 +133,14 @@ class BrowserUseScraper:
             logger.info("🐢 标准模式：模拟真实用户行为")
 
         profile = BrowserProfile(
+            keep_alive=self.keep_alive,
             headless=self.headless,
             disable_security=False,  # 保持安全特性,更像真实浏览器
             user_data_dir=None,
             args=browser_args,
             ignore_default_args=['--enable-automation'],  # 隐藏自动化标识
             wait_for_network_idle_page_load_time=wait_page_load,  # Fast Mode: 0.1s, 标准: 2.0s
-            maximum_wait_page_load_time=max_page_load,  # Fast Mode: 5.0s, 标准: 10.0s
+           # maximum_wait_page_load_time=max_page_load,  # Fast Mode: 5.0s, 标准: 10.0s
             wait_between_actions=wait_actions,  # Fast Mode: 0.1s, 标准: 1.0s
         )
 
@@ -204,20 +207,6 @@ class BrowserUseScraper:
 
         logger.info("=" * 60)
 
-    def _get_browser_session(self) -> BrowserSession:
-        """获取或创建BrowserSession实例"""
-        if self.browser_session is None:
-            logger.info(f"📍 STEP 3: 创建浏览器会话 | headless={self.headless}")
-            logger.info(f"   🌐 正在启动浏览器...")
-            self.browser_session = BrowserSession(
-                browser_profile=self.browser_profile
-            )
-            self.browser_session.start()
-            logger.info("   ✓ 浏览器会话创建成功")
-        else:
-            logger.debug("复用现有浏览器会话")
-        return self.browser_session
-
     async def scrape_with_task(
             self,
             task: str,
@@ -239,8 +228,6 @@ class BrowserUseScraper:
         """
         logger.info(f"📍 STEP 4: 开始AI爬取任务 | max_steps={max_steps}, use_vision={use_vision}")
 
-        browser_session = await self._get_browser_session()
-
         logger.info(
             f"任务配置: max_steps={max_steps}, use_vision={use_vision}, output_model={output_model.__name__ if output_model else 'None'}")
         logger.debug(f"完整任务描述:\n{task}")
@@ -252,14 +239,14 @@ class BrowserUseScraper:
             agent_kwargs = {
                 "task": task,
                 "llm": self.llm,
-                "browser_session": browser_session,
+                "browser_session": self.browser_session,
                 "output_model_schema": output_model,
                 "use_vision": use_vision,
             }
 
             if self.fast_mode:
                 agent_kwargs["flash_mode"] = True  # 禁用LLM thinking以提升速度
-                agent_kwargs["extend_system_message"] = SPEED_OPTIMIZATION_PROMPT
+                agent_kwargs["extend_system_message"] = SystemPrompts.SPEED_OPTIMIZATION
                 logger.info("🚀 Fast Mode: flash_mode=True, 速度优化提示词已应用")
 
             agent = Agent(**agent_kwargs)
@@ -305,7 +292,8 @@ class BrowserUseScraper:
                     # 转换失败时保持原始数据
 
             return {
-                "status": history.is_successful(),
+                "is_successful": history.is_successful(),  ### 是否成功
+                "status": "success",
                 "data": result,  # ← 现在是 Pydantic 对象（如果指定了 output_model）
                 "steps": len(history.history),
                 "urls": visited_urls,
@@ -315,12 +303,14 @@ class BrowserUseScraper:
         except asyncio.TimeoutError:
             logger.error(f"❌ AI爬取超时: {settings.MAX_SCRAPE_TIMEOUT}秒")
             return {
+                "is_successful": False,
                 "status": "timeout",
                 "error": f"Task exceeded {settings.MAX_SCRAPE_TIMEOUT}s timeout"
             }
         except Exception as e:
             logger.exception(f"❌ AI爬取失败: {e}")
             return {
+                "is_successful": False,
                 "status": "error",
                 "error": str(e)
             }
@@ -359,138 +349,13 @@ class BrowserUseScraper:
                 self.browser_session = None
                 logger.debug("浏览器会话对象已清空")
 
-    async def __aenter__(self):
-        """异步上下文管理器入口"""
-        await self._get_browser_session()
-        return self
+
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器退出"""
         await self.close()
 
-    async def run_task_chain(
-            self,
-            tasks: List[str],
-            output_model: Optional[type[BaseModel]] = None,
-            max_steps_per_task: int = 20
-    ) -> List[dict]:
-        """
-        链式执行多个任务（保持浏览器会话）
 
-        Args:
-            tasks: 任务列表（自然语言描述）
-            output_model: Pydantic模型类（可选）
-            max_steps_per_task: 每个任务的最大步骤数
-
-        Returns:
-            每个任务的执行结果列表
-
-        Example:
-            tasks = [
-                "搜索'北京故宫'",
-                "点击第一个搜索结果",
-                "提取页面标题和摘要"
-            ]
-            results = await scraper.run_task_chain(tasks)
-        """
-        if not tasks:
-            logger.warning("任务列表为空")
-            return []
-
-        logger.info(f"🔗 开始链式执行 {len(tasks)} 个任务（Keep-Alive模式）")
-
-        # 确保浏览器会话已启动
-        browser_session = await self._get_browser_session()
-
-        results = []
-
-        for idx, task in enumerate(tasks, 1):
-            logger.info(f"📍 任务 {idx}/{len(tasks)}: {task[:50]}...")
-
-            try:
-                # 第一个任务：创建新Agent
-                if idx == 1:
-                    logger.info(f"📍 STEP 5: 创建AI Agent（任务{idx}）")
-
-                    agent_kwargs = {
-                        "task": task,
-                        "llm": self.llm,
-                        "browser_session": browser_session,
-                        "output_model_schema": output_model,
-                        "use_vision": True,
-                    }
-
-                    if self.fast_mode:
-                        agent_kwargs["flash_mode"] = True
-                        agent_kwargs["extend_system_message"] = SPEED_OPTIMIZATION_PROMPT
-
-                    self.current_agent = Agent(**agent_kwargs)
-                    logger.info(f"✓ AI Agent创建成功（任务{idx}）")
-
-                else:
-                    # 后续任务：添加到现有Agent
-                    logger.info(f"📍 STEP 5: 添加新任务到Agent（任务{idx}）")
-                    self.current_agent.add_new_task(task)
-                    logger.info(f"✓ 任务已添加到Agent（任务{idx}）")
-
-                # 执行任务
-                logger.info(f"📍 STEP 6: 执行AI任务{idx} | timeout={settings.MAX_SCRAPE_TIMEOUT}s")
-                history = await asyncio.wait_for(
-                    self.current_agent.run(max_steps=max_steps_per_task),
-                    timeout=settings.MAX_SCRAPE_TIMEOUT
-                )
-
-                # 提取结果
-                result: Any = history.final_result()
-                visited_urls = [item.state.url for item in history.history if hasattr(item.state, 'url')]
-
-                logger.info(f"✅ 任务{idx}完成，执行了 {len(history.history)} 步")
-                logger.debug(f"访问的页面: {visited_urls}")
-
-                # 🔧 自动类型转换（与 scrape_with_task 一致）
-                if output_model and result:
-                    try:
-                        if isinstance(result, str):
-                            result = output_model.model_validate_json(result)
-                            logger.debug(f"✓ 任务{idx}自动转换 JSON → {output_model.__name__} 对象")
-                        elif isinstance(result, dict):
-                            result = output_model.model_validate(result)
-                            logger.debug(f"✓ 任务{idx}自动转换 dict → {output_model.__name__} 对象")
-                    except Exception as e:
-                        logger.warning(f"⚠️  任务{idx}类型转换失败: {e}，返回原始数据")
-
-                results.append({
-                    "task_index": idx,
-                    "task": task,
-                    "status": "success",
-                    "data": result,  # ← 现在是 Pydantic 对象
-                    "steps": len(history.history),
-                    "urls": visited_urls
-                })
-
-            except asyncio.TimeoutError:
-                logger.error(f"❌ 任务{idx}超时: {settings.MAX_SCRAPE_TIMEOUT}秒")
-                results.append({
-                    "task_index": idx,
-                    "task": task,
-                    "status": "timeout",
-                    "error": f"Task exceeded {settings.MAX_SCRAPE_TIMEOUT}s timeout"
-                })
-                break  # 超时后中断链式执行
-
-            except Exception as e:
-                logger.exception(f"❌ 任务{idx}失败: {e}")
-                results.append({
-                    "task_index": idx,
-                    "task": task,
-                    "status": "error",
-                    "error": str(e)
-                })
-                break  # 失败后中断链式执行
-
-        logger.info(f"🔗 链式任务执行完成: {len(results)}/{len(tasks)} 个任务")
-
-        return results
 
     @staticmethod
     async def run_parallel(

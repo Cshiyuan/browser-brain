@@ -102,7 +102,11 @@ class PlannerAgent:
             self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
 
             # 创建临时爬虫实例用于搜索攻略
-            xhs_scraper = XHSScraper(headless=self.headless)
+            xhs_scraper = XHSScraper(
+                headless=self.headless,
+                keep_alive=True,
+                #fast_mode=True,
+            )
             try:
                 recommended_attractions = await xhs_scraper.search_destination_guide(
                     destination=destination,
