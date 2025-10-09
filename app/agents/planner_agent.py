@@ -15,23 +15,22 @@ logger = setup_logger(__name__)
 class PlannerAgent:
     """基于Browser-Use的AI旅行规划Agent"""
 
-    def __init__(self, headless: bool = None, log_callback=None):
+    def __init__(self, headless: bool = None):
         """
         初始化规划Agent
 
         Args:
             headless: 是否无头模式（None则使用配置文件）
-            log_callback: 日志回调函数，用于将日志传递到前端
+
+        注意:
+            不再需要传递 log_callback，使用全局 log_manager 管理日志
         """
         self.headless = headless if headless is not None else settings.HEADLESS
         self.attractions: List[Attraction] = []
-        self.log_callback = log_callback
 
     def _log(self, message: str):
-        """内部日志方法：同时输出到logger和前端"""
+        """内部日志方法"""
         logger.info(message)
-        if self.log_callback:
-            self.log_callback(message)
 
     async def plan_trip(
         self,
@@ -57,7 +56,7 @@ class PlannerAgent:
         self._log(f"   出发地: {departure}")
         self._log(f"   目的地: {destination}")
         self._log(f"   天数: {days}天")
-        self._log(f"   必去景点: {must_visit if must_visit else '无（自由行）'}")
+        self._log(f"   必去景点: {must_visit if must_visit else '无（自动规划）'}")
         self._log("="*60)
 
         try:
@@ -97,9 +96,29 @@ class PlannerAgent:
             destination: 目的地
             must_visit: 必去景点
         """
+        # 如果没有指定必去景点，从小红书攻略中提取推荐景点
         if not must_visit:
-            self._log("   ℹ️  未指定必去景点，将生成自由行方案")
-            return
+            self._log("   ℹ️  未指定必去景点，将从小红书攻略中搜集推荐景点...")
+            self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
+
+            # 创建临时爬虫实例用于搜索攻略
+            xhs_scraper = XHSScraper(headless=self.headless)
+            try:
+                recommended_attractions = await xhs_scraper.search_destination_guide(
+                    destination=destination,
+                    max_attractions=5  # 默认提取5个推荐景点
+                )
+
+                if not recommended_attractions:
+                    self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
+                    return
+
+                # 使用提取的景点作为必去景点
+                must_visit = recommended_attractions
+                self._log(f"   ✅ 成功从攻略中提取 {len(must_visit)} 个推荐景点: {must_visit}")
+
+            finally:
+                await xhs_scraper.close()
 
         self._log(f"   🎯 目标景点: {must_visit}")
         self._log(f"   🤖 启动AI爬虫...")

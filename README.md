@@ -92,34 +92,15 @@ MAX_SCRAPE_TIMEOUT=300
 - OpenAI: [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 - Anthropic: [https://console.anthropic.com/](https://console.anthropic.com/)
 
-### 4. 运行程序
+### 4. 启动应用
 
-**💻 命令行模式**
-
-```bash
-python app/main.py
-```
-
-**示例交互:**
-```
-📍 出发地: 深圳
-📍 目的地: 北京
-📅 游玩天数: 7
-🎯 必去景点(用逗号分隔): 故宫,天安门,颐和园,长城
-
-🤖 AI Agent正在智能规划中...
-   - AI正在搜索小红书...
-   - AI正在访问官方网站...
-   - AI正在生成最佳方案...
-```
-
-**🌐 Web界面模式**
+**🌐 Web界面（推荐）**
 
 ```bash
-streamlit run frontend/app.py
+bash run_web.sh
 ```
 
-访问 `http://localhost:8501`
+访问 `http://localhost:8501` 开始使用
 
 ## 📖 AI工作流程详解
 
@@ -274,17 +255,16 @@ BROWSER_USE_API_KEY=your-key
 │   ├── scrapers/            # AI爬虫层
 │   │   ├── browser_use_scraper.py # AI爬虫基类
 │   │   ├── xhs_scraper.py         # 小红书AI爬虫
-│   │   └── official_scraper.py    # 官网AI爬虫
-│   ├── core/                # 核心业务
-│   │   └── browser_manager.py    # Playwright浏览器管理
+│   │   ├── official_scraper.py    # 官网AI爬虫
+│   │   ├── run_xhs.py            # 小红书独立运行脚本
+│   │   └── run_official.py       # 官网独立运行脚本
 │   ├── models/              # 数据模型
 │   │   ├── attraction.py         # 景点模型
-│   │   ├── hotel.py             # 酒店/机票模型
 │   │   └── trip_plan.py         # 旅行方案模型
-│   ├── utils/               # 工具函数
-│   │   ├── link_validator.py    # URL验证和提取
-│   │   └── logger.py            # 日志工具
-│   └── main.py             # 程序入口
+│   └── utils/               # 工具函数
+│       └── logger.py            # 日志工具
+├── frontend/
+│   └── app.py              # Streamlit Web界面
 ├── config/
 │   └── settings.py         # 配置管理
 └── data/                   # 数据存储
@@ -329,24 +309,31 @@ BROWSER_USE_API_KEY=your-key
 ### 查看AI执行过程
 
 ```bash
-# 关闭无头模式,观看AI操作
-export HEADLESS=false
-python app/main.py
+# Web界面：在侧边栏取消勾选"无头模式"
+
+# 独立运行爬虫（显示浏览器）
+bash run_xhs_scraper.sh "北京故宫" -n 3
 ```
 
 ### 查看日志
 
 ```bash
-tail -f logs/app_$(date +%Y%m%d).log
+# 开启DEBUG日志
+export LOG_LEVEL=DEBUG
+bash run_web.sh
+
+# 查看日志文件
+tail -f logs/scrapers/xhs_scraper_$(date +%Y%m%d).log
 ```
 
-### 测试单个景点
+### 测试独立收集器
 
-```python
-from app.scrapers.xhs_scraper import XHSScraper
+```bash
+# 测试小红书爬虫
+bash run_xhs_scraper.sh "北京故宫" -n 3
 
-scraper = XHSScraper(headless=False)
-notes = await scraper.search_attraction("故宫", max_notes=3)
+# 测试官网爬虫
+bash run_official_scraper.sh "北京故宫" -l "https://www.dpm.org.cn"
 ```
 
 ## 🙏 致谢

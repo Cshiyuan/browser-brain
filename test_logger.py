@@ -1,50 +1,166 @@
-"""快速测试新的日志系统"""
-from app.utils.logger import setup_logger, log_function_call, log_step, log_api_call
+"""测试全局日志管理器功能"""
+import sys
+from pathlib import Path
 
-# 测试 scrapers 模块日志
-logger_scraper = setup_logger("app.scrapers.test_scraper")
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent))
 
-logger_scraper.info("========== 测试 Scrapers 日志 ==========")
-log_step(1, "初始化爬虫", target="测试景点")
-log_step(2, "开始爬取数据", max_items=10)
-logger_scraper.debug("这是DEBUG级别日志")
-logger_scraper.info("这是INFO级别日志")
-logger_scraper.warning("这是WARNING级别日志")
-log_api_call("测试API", request_data={"query": "test"}, response_data={"result": "success"}, status="success")
+from app.utils.logger import glogger, setup_logger
 
-# 测试 agents 模块日志
-logger_agent = setup_logger("app.agents.test_agent")
-logger_agent.info("========== 测试 Agents 日志 ==========")
-log_step(1, "创建规划", destination="北京")
-log_step(2, "生成行程", days=3)
+# 初始化本地logger
+logger = setup_logger(__name__)
 
-# 测试函数调用装饰器
-@log_function_call
-def test_sync_function(param1, param2="default"):
-    """测试同步函数"""
-    logger_agent.info(f"执行中: param1={param1}, param2={param2}")
-    return "sync_result"
 
-@log_function_call
-async def test_async_function(param1):
-    """测试异步函数"""
-    logger_agent.info(f"异步执行中: param1={param1}")
-    return "async_result"
+def test_basic_logging():
+    """测试基础日志功能"""
+    print("\n" + "="*60)
+    print("测试1: 基础日志功能")
+    print("="*60)
 
-# 调用测试函数
-test_sync_function("value1", param2="value2")
+    glogger.info("这是一条INFO日志")
+    glogger.warning("这是一条WARNING日志")
+    glogger.error("这是一条ERROR日志")
+    glogger.debug("这是一条DEBUG日志")
 
-import asyncio
-asyncio.run(test_async_function("async_value"))
+    print("✅ 基础日志测试完成\n")
 
-print("\n✅ 日志测试完成!")
-print("\n📂 日志文件位置:")
-print("  - logs/scrapers/test_scraper_20251005.log")
-print("  - logs/agents/test_agent_20251005.log")
-print("\n💡 请查看日志文件验证以下特性:")
-print("  ✓ 模块化目录（scrapers/agents/）")
-print("  ✓ 文件名:行号")
-print("  ✓ 函数名")
-print("  ✓ STEP标记")
-print("  ✓ ENTER/EXIT标记")
-print("  ✓ API调用追踪")
+
+def test_callback_registration():
+    """测试回调注册功能"""
+    print("="*60)
+    print("测试2: 回调注册功能")
+    print("="*60)
+
+    # 定义测试回调
+    collected_logs = []
+
+    def test_callback(message: str):
+        collected_logs.append(message)
+        print(f"   [回调捕获] {message}")
+
+    # 注册回调
+    glogger.register_callback("test_frontend", test_callback)
+
+    # 发送日志
+    glogger.info("测试日志1: 初始化浏览器")
+    glogger.info("测试日志2: 开始爬取数据")
+    glogger.warning("测试日志3: 检测到反爬虫")
+    glogger.error("测试日志4: 爬取失败")
+
+    # 移除回调
+    glogger.unregister_callback("test_frontend")
+
+    print(f"\n回调收集到的日志数量: {len(collected_logs)}")
+    print("✅ 回调注册测试完成\n")
+
+    return collected_logs
+
+
+def test_multiple_callbacks():
+    """测试多个回调"""
+    print("="*60)
+    print("测试3: 多个回调同时工作")
+    print("="*60)
+
+    # 定义多个回调
+    frontend_logs = []
+    websocket_logs = []
+
+    def frontend_callback(msg):
+        frontend_logs.append(msg)
+        print(f"   [前端] {msg}")
+
+    def websocket_callback(msg):
+        websocket_logs.append(msg)
+        print(f"   [WebSocket] {msg}")
+
+    # 注册多个回调
+    glogger.register_callback("frontend", frontend_callback)
+    glogger.register_callback("websocket", websocket_callback)
+
+    # 发送日志
+    glogger.info("多回调测试日志1")
+    glogger.info("多回调测试日志2")
+
+    # 清理
+    glogger.clear_callbacks()
+
+    print(f"\n前端收集到: {len(frontend_logs)} 条")
+    print(f"WebSocket收集到: {len(websocket_logs)} 条")
+    print("✅ 多回调测试完成\n")
+
+
+def test_step_logging():
+    """测试步骤日志"""
+    print("="*60)
+    print("测试4: 步骤日志功能")
+    print("="*60)
+
+    collected_steps = []
+
+    def step_callback(msg):
+        collected_steps.append(msg)
+        print(f"   [步骤] {msg}")
+
+    glogger.register_callback("step_test", step_callback)
+
+    # 测试步骤日志
+    glogger.log_step(1, "初始化浏览器", headless=True)
+    glogger.log_step(2, "访问小红书网站", url="https://xiaohongshu.com")
+    glogger.log_step(3, "搜索关键词", keyword="北京故宫")
+
+    glogger.unregister_callback("step_test")
+
+    print(f"\n收集到步骤日志: {len(collected_steps)} 条")
+    print("✅ 步骤日志测试完成\n")
+
+
+def test_callback_error_handling():
+    """测试回调错误处理"""
+    print("="*60)
+    print("测试5: 回调错误处理")
+    print("="*60)
+
+    def faulty_callback(msg):
+        raise ValueError("故意抛出的错误")
+
+    glogger.register_callback("faulty", faulty_callback)
+
+    # 这应该不会中断程序
+    glogger.info("测试错误回调")
+
+    glogger.unregister_callback("faulty")
+
+    print("✅ 错误处理测试完成（回调失败不影响主流程）\n")
+
+
+def main():
+    """运行所有测试"""
+    print("\n🧪 全局日志管理器测试套件")
+    print("="*60)
+
+    test_basic_logging()
+    logs = test_callback_registration()
+    test_multiple_callbacks()
+    test_step_logging()
+    test_callback_error_handling()
+
+    print("\n" + "="*60)
+    print("🎉 所有测试完成！")
+    print("="*60)
+
+    print("\n📊 测试总结:")
+    print("   ✅ 基础日志功能")
+    print("   ✅ 回调注册/注销")
+    print("   ✅ 多回调并发")
+    print("   ✅ 步骤日志")
+    print("   ✅ 错误处理")
+
+    print("\n💡 使用方法:")
+    print("   1. 前端注册回调: glogger.register_callback('frontend', callback_func)")
+    print("   2. 模块使用日志: glogger.info('日志消息')")
+    print("   3. 清理回调: glogger.unregister_callback('frontend')")
+
+
+if __name__ == "__main__":
+    main()

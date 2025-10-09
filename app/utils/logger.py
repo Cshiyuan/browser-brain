@@ -1,108 +1,238 @@
 """基于 loguru 的增强日志系统
 
 特性：
-- 自动按模块分目录存储日志（scrapers/agents/frontend/main）
+- 统一目录存储，文件名前缀区分模块（如 scrapers_xhs_scraper_20251009.log）
+- 支持全局回调（所有 logger 共享，如前端显示）
+- 支持局部回调（特定 logger 独有，如模块专用的日志文件）
 - 自动包含文件名、行号、函数名
 - 彩色控制台输出
 - 日志轮转和压缩
 - 异常追踪
-- 装饰器支持
 """
 import os
 import sys
-import functools
-import logging
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Dict
 from loguru import logger
 
-
-# 日志根目录
+# 日志根目录（统一存储，不再分子目录）
 LOG_ROOT_DIR = Path("logs")
 
-# 日志目录映射
-LOG_DIR_MAPPING = {
-    'app.scrapers': 'scrapers',
-    'app.agents': 'agents',
-    'frontend': 'frontend',
-    'app.models': 'models',
-    'app.utils': 'utils',
-}
-
-# 创建所有日志目录（包括 browser-use 专用目录）
-def _ensure_log_directories():
-    """确保所有日志目录存在"""
-    # 创建根目录
-    LOG_ROOT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 创建所有子目录
-    for subdir in LOG_DIR_MAPPING.values():
-        (LOG_ROOT_DIR / subdir).mkdir(parents=True, exist_ok=True)
-
-    # 创建 browser-use 专用目录
-    (LOG_ROOT_DIR / "browser_use").mkdir(parents=True, exist_ok=True)
-
-    # 创建主日志目录
-    (LOG_ROOT_DIR / "main").mkdir(parents=True, exist_ok=True)
-
-# 在模块加载时创建目录
-_ensure_log_directories()
+# 确保日志根目录存在
+LOG_ROOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _get_log_subdir(module_name: str) -> str:
-    """根据模块名确定日志子目录"""
-    for prefix, subdir in LOG_DIR_MAPPING.items():
-        if module_name.startswith(prefix):
-            return subdir
-    return 'main'
+# ==================== 全局回调管理器 ====================
 
-
-def setup_logger(name: str, level: str = None) -> "logger":
+class GlobalCallbackManager:
     """
-    设置增强的日志记录器（基于 loguru）
+    全局回调管理器（单例模式）
 
     特性：
-    - 自动按模块分类到不同目录
+    - 管理所有 logger 共享的全局回调（如前端显示、监控告警）
+    - 自动注入到 loguru 的 handler 中
+    - 线程安全
+
+    使用场景：
+        # 前端注册回调（所有日志都会触发）
+        add_global_callback("frontend", streamlit_callback)
+
+        # 清理回调
+        remove_global_callback("frontend")
+    """
+
+    _instance: Optional["GlobalCallbackManager"] = None
+    _callbacks: Dict[str, Callable[[str], None]] = {}
+
+    def __new__(cls):
+        """单例模式"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._callbacks = {}
+        return cls._instance
+
+    def add_callback(self, name: str, callback: Callable[[str], None]):
+        """
+        注册全局回调
+
+        Args:
+            name: 回调名称（如 "frontend", "monitoring"）
+            callback: 回调函数，接收日志消息字符串
+        """
+        self._callbacks[name] = callback
+        logger.info(f"✓ 全局回调已注册: {name}")
+
+    def remove_callback(self, name: str):
+        """移除全局回调"""
+        if name in self._callbacks:
+            del self._callbacks[name]
+            logger.info(f"✓ 全局回调已移除: {name}")
+
+    def clear_callbacks(self):
+        """清空所有全局回调"""
+        self._callbacks.clear()
+        logger.info("✓ 所有全局回调已清空")
+
+    def trigger(self, message: str):
+        """触发所有全局回调（内部使用）"""
+        for callback in self._callbacks.values():
+            try:
+                callback(message)
+            except Exception as e:
+                # 回调失败不影响主流程
+                logger.warning(f"⚠️  全局回调执行失败: {e}")
+
+
+# 全局单例实例
+_global_callback_manager = GlobalCallbackManager()
+
+
+# ==================== 公共 API ====================
+
+def add_global_callback(name: str, callback: Callable[[str], None]):
+    """
+    注册全局日志回调（所有 logger 共享）
+
+    Args:
+        name: 回调名称（如 "frontend"）
+        callback: 回调函数，接收日志消息字符串
+
+    使用示例：
+        def streamlit_callback(msg: str):
+            st.session_state.logs.append(msg)
+
+        add_global_callback("frontend", streamlit_callback)
+    """
+    _global_callback_manager.add_callback(name, callback)
+
+
+def remove_global_callback(name: str):
+    """移除全局回调"""
+    _global_callback_manager.remove_callback(name)
+
+
+def clear_global_callbacks():
+    """清空所有全局回调"""
+    _global_callback_manager.clear_callbacks()
+
+
+# ==================== 日志文件命名 ====================
+
+def _get_log_prefix(module_name: str) -> str:
+    """
+    根据模块名生成日志文件前缀
+
+    示例：
+        app.scrapers.xhs_scraper → scrapers_xhs_scraper
+        app.agents.planner_agent → agents_planner_agent
+        frontend.app → frontend_app
+        app.utils.logger → utils_logger
+    """
+    # 移除 app. 前缀
+    if module_name.startswith('app.'):
+        module_name = module_name[4:]
+
+    # 替换点号为下划线
+    return module_name.replace('.', '_')
+
+
+# ==================== setup_logger ====================
+
+# 用于记录是否已经初始化过基础 handlers（控制台、文件、全局回调）
+_initialized = False
+
+
+def setup_logger(
+    name: str,
+    level: Optional[str] = None,
+    local_callback: Optional[Callable[[str], None]] = None
+):
+    """
+    设置增强的日志记录器
+
+    特性：
+    - 统一目录存储（logs/），文件名前缀区分模块
     - 文件日志包含：时间、模块、[文件:行号]、函数名、级别、消息
     - 控制台彩色输出
     - 自动日志轮转（500MB/文件，保留10个文件）
     - 日志压缩（zip格式）
+    - ✨ 全局回调：所有 logger 共享（如前端显示），使用 add_global_callback() 注册
+    - ✨ 局部回调：仅此 logger 独有（如模块专用日志处理），通过 local_callback 参数传入
 
     Args:
         name: 模块名（通常传入 __name__）
         level: 日志级别（DEBUG/INFO/WARNING/ERROR），None则从环境变量读取
+        local_callback: 局部回调函数（可选），仅对当前 logger 生效
 
     Returns:
-        配置好的 loguru logger 实例（全局单例）
+        绑定了模块名的 loguru logger 实例
 
     使用示例：
+        # 基础用法
         logger = setup_logger(__name__)
         logger.info("开始处理")
-        logger.debug("详细信息", extra={"user_id": 123})
+
+        # 使用局部回调（仅此 logger 触发）
+        def my_local_callback(msg: str):
+            print(f"[LOCAL] {msg}")
+
+        logger = setup_logger(__name__, local_callback=my_local_callback)
+        logger.info("这条日志会触发局部回调")
+
+    日志文件示例：
+        logs/scrapers_xhs_scraper_20251009.log
+        logs/agents_planner_agent_20251009.log
+        logs/frontend_app_20251009.log
     """
+    global _initialized
+
     # 从环境变量读取日志级别
     if level is None:
         level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # loguru 使用全局单例，因此只需配置一次
-    # 移除默认的 handler
-    logger.remove()
+    # 只在第一次调用时初始化基础 handlers
+    if not _initialized:
+        # loguru 使用全局单例，因此只需配置一次
+        # 移除默认的 handler
+        logger.remove()
 
-    # === 控制台输出（彩色、简洁格式）===
-    logger.add(
-        sys.stdout,
-        colorize=True,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-        level=level,
-    )
+        # === 1. 控制台输出（彩色、简洁格式）===
+        logger.add(
+            sys.stdout,
+            colorize=True,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+            level=level,
+        )
 
-    # === 文件输出（详细格式，包含代码行号）===
-    log_subdir = _get_log_subdir(name)
-    log_dir = LOG_ROOT_DIR / log_subdir
+        # === 2. 全局回调（所有 logger 共享）===
+        """
+        创建一个 loguru handler，用于触发全局回调
 
-    # 获取模块简称
-    module_short_name = name.split('.')[-1]
-    log_file = log_dir / f"{module_short_name}_{{time:YYYYMMDD}}.log"
+        Args:
+            level: 日志级别（如 "INFO"）
+        """
+
+        def callback_sink(message):
+            """将日志消息触发全局回调"""
+            # message.record 是 loguru 的日志记录对象
+            log_msg = message.record["message"]
+            _global_callback_manager.trigger(log_msg)
+
+        logger.add(
+            callback_sink,
+            format="{message}",  # 只传递消息内容
+            level=level,
+            filter=lambda record: True  # 所有日志都触发
+        )
+
+        _initialized = True
+
+    # === 3. 文件输出（详细格式，包含代码行号）- 每个模块独立 ===
+    # 生成文件前缀（如 scrapers_xhs_scraper）
+    log_prefix = _get_log_prefix(name)
+
+    # 文件路径：logs/模块前缀_日期.log
+    log_file = LOG_ROOT_DIR / f"{log_prefix}_{{time:YYYYMMDD}}.log"
 
     logger.add(
         str(log_file),
@@ -113,83 +243,38 @@ def setup_logger(name: str, level: str = None) -> "logger":
         compression="zip",  # 压缩旧日志
         encoding="utf-8",
         enqueue=True,  # 异步写入，提高性能
+        filter=lambda record: record["extra"].get("name") == name  # 只记录当前模块的日志
     )
+
+    # === 4. 局部回调（仅此 logger 独有）===
+    if local_callback:
+        def local_callback_sink(message):
+            """触发局部回调"""
+            # 只处理当前模块的日志
+            if message.record["extra"].get("name") == name:
+                log_msg = message.record["message"]
+                try:
+                    local_callback(log_msg)
+                except Exception as e:
+                    logger.warning(f"⚠️  局部回调执行失败: {e}")
+
+        logger.add(
+            local_callback_sink,
+            format="{message}",
+            level=level
+        )
 
     # 绑定模块名称到logger
     return logger.bind(name=name)
 
 
-def log_function_call(func: Optional[Callable] = None):
-    """
-    装饰器：自动记录函数的进入和退出
-
-    用法：
-        from app.utils.logger import setup_logger, log_function_call
-
-        logger = setup_logger(__name__)
-
-        @log_function_call
-        async def my_function(arg1, arg2):
-            logger.info("处理中...")
-            return result
-
-    特性：
-    - 自动记录函数进入（ENTER）和退出（EXIT）
-    - 记录函数参数（前2个位置参数 + 所有关键字参数的key）
-    - 自动捕获并记录异常
-    - 支持同步和异步函数
-    """
-    def decorator(f: Callable) -> Callable:
-        @functools.wraps(f)
-        async def async_wrapper(*args, **kwargs):
-            func_name = f.__qualname__
-            # 只记录前2个参数，避免日志过长
-            args_repr = f"args={args[:2]}" if args else "args=()"
-            kwargs_repr = f"kwargs={list(kwargs.keys())}" if kwargs else "kwargs={}"
-
-            logger.info(f"→ ENTER {func_name} | {args_repr}, {kwargs_repr}")
-
-            try:
-                result = await f(*args, **kwargs)
-                logger.info(f"← EXIT {func_name} | success")
-                return result
-            except Exception as e:
-                logger.exception(f"← EXIT {func_name} | error: {e}")
-                raise
-
-        @functools.wraps(f)
-        def sync_wrapper(*args, **kwargs):
-            func_name = f.__qualname__
-            args_repr = f"args={args[:2]}" if args else "args=()"
-            kwargs_repr = f"kwargs={list(kwargs.keys())}" if kwargs else "kwargs={}"
-
-            logger.info(f"→ ENTER {func_name} | {args_repr}, {kwargs_repr}")
-
-            try:
-                result = f(*args, **kwargs)
-                logger.info(f"← EXIT {func_name} | success")
-                return result
-            except Exception as e:
-                logger.exception(f"← EXIT {func_name} | error: {e}")
-                raise
-
-        # 判断是否是协程函数
-        import asyncio
-        if asyncio.iscoroutinefunction(f):
-            return async_wrapper
-        else:
-            return sync_wrapper
-
-    # 支持 @log_function_call 和 @log_function_call() 两种用法
-    if func is None:
-        return decorator
-    else:
-        return decorator(func)
-
+# ==================== 便捷函数 ====================
 
 def log_step(step_num: int, description: str, **details):
     """
     记录流程步骤（带步骤编号和emoji标记）
+
+    ✨ 自动触发全局回调（如前端显示）
 
     用法：
         from app.utils.logger import log_step
@@ -207,109 +292,18 @@ def log_step(step_num: int, description: str, **details):
     msg = f"📍 STEP {step_num}: {description}"
     if detail_str:
         msg += f" | {detail_str}"
+
     logger.info(msg)
 
 
-def log_api_call(api_name: str, request_data: Any = None, response_data: Any = None, status: str = "success"):
-    """
-    记录API调用（请求/响应）
+# ==================== 导出 ====================
 
-    用法：
-        from app.utils.logger import log_api_call
-
-        # 记录请求
-        log_api_call("Google Gemini API", request_data={"task": "爬取小红书"})
-
-        # 记录响应
-        log_api_call("Google Gemini API", response_data=result, status="success")
-
-        # 记录完整调用
-        log_api_call("Google Gemini API",
-                     request_data={"task": "..."},
-                     response_data=result,
-                     status="success")
-
-    Args:
-        api_name: API名称
-        request_data: 请求数据
-        response_data: 响应数据
-        status: 调用状态（success/error/timeout）
-    """
-    if request_data is not None:
-        # 截断长数据，避免日志过长
-        data_str = str(request_data)[:200]
-        if len(str(request_data)) > 200:
-            data_str += "..."
-        logger.debug(f"📤 API REQUEST: {api_name} | {data_str}")
-
-    if response_data is not None:
-        data_str = str(response_data)[:200]
-        if len(str(response_data)) > 200:
-            data_str += "..."
-
-        if status == "success":
-            logger.debug(f"📥 API RESPONSE: {api_name} | {data_str}")
-        elif status == "error":
-            logger.error(f"❌ API ERROR: {api_name} | {data_str}")
-        else:
-            logger.warning(f"⚠️  API {status.upper()}: {api_name} | {data_str}")
-
-
-def setup_browser_use_logging():
-    """
-    配置 browser-use 库的标准日志系统（logging模块）
-
-    browser-use 使用标准 logging 库，此函数将其日志输出到文件。
-    调用时机：在创建 BrowserUseScraper 实例时
-
-    使用示例：
-        from app.utils.logger import setup_browser_use_logging
-
-        # 在爬虫初始化时调用一次
-        setup_browser_use_logging()
-    """
-    from datetime import datetime
-
-    # 创建带时间戳的日志文件
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = LOG_ROOT_DIR / "browser_use" / f"agent_{timestamp}.log"
-
-    # 获取 browser-use 的根 logger
-    browser_use_logger = logging.getLogger('browser_use')
-    browser_use_logger.setLevel(logging.DEBUG)
-
-    # 避免重复添加 handler
-    if browser_use_logger.handlers:
-        return
-
-    # 创建文件处理器
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)
-
-    # 设置格式器
-    formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(formatter)
-    browser_use_logger.addHandler(file_handler)
-
-    # 添加控制台输出（可选）
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    browser_use_logger.addHandler(console_handler)
-
-    logger.info(f"✓ Browser-Use 日志已配置: {log_file}")
-
-
-# 导出主要接口
 __all__ = [
     'setup_logger',
-    'setup_browser_use_logging',
-    'log_function_call',
     'log_step',
-    'log_api_call',
     'logger',  # 直接导出 loguru.logger 供高级用法
     'LOG_ROOT_DIR',  # 导出日志根目录常量
+    'add_global_callback',  # 注册全局回调
+    'remove_global_callback',  # 移除全局回调
+    'clear_global_callbacks',  # 清空全局回调
 ]

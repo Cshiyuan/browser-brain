@@ -32,15 +32,6 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-# 检查依赖
-echo ""
-echo "🔍 检查依赖..."
-python -c "import streamlit" 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "❌ 未安装 streamlit"
-    echo "   请运行: pip install -r requirements.txt"
-    exit 1
-fi
 
 # 创建数据目录
 mkdir -p data/plans

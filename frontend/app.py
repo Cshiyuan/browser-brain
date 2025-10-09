@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.agents.planner_agent import PlannerAgent
-from app.utils.logger import setup_logger
+from app.utils.logger import setup_logger, add_global_callback, remove_global_callback
 
 logger = setup_logger(__name__)
 
@@ -292,11 +292,15 @@ if st.button("🚀 开始智能规划", type="primary"):
                     colored_logs = [colorize_log(log) for log in filtered[-50:]]  # 最新50条
                     log_container.text("\n".join(colored_logs))
 
+                # 注册全局回调（所有 logger 共享）
+                add_global_callback("frontend", add_log)
+
                 st.session_state.planning_logs.append("📦 初始化浏览器...")
                 status_text.text("📦 初始化浏览器...")
                 progress_bar.progress(10)
 
-                planner = PlannerAgent(headless=headless_mode, log_callback=add_log)
+                ## 初始化agent（不再需要传递 log_callback）
+                planner = PlannerAgent(headless=headless_mode)
 
                 try:
                     st.session_state.planning_logs.append("🔍 开始收集景点信息...")
@@ -339,6 +343,10 @@ if st.button("🚀 开始智能规划", type="primary"):
                     logger.error(f"规划失败: {e}", exc_info=True)
                     st.session_state.planning_logs.append(f"❌ 错误: {e}")
                     return None, str(e)
+
+                finally:
+                    # 清理全局回调（避免内存泄漏）
+                    remove_global_callback("frontend")
 
             # 运行异步任务
             try:

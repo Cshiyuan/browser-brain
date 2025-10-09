@@ -83,18 +83,42 @@ HEADLESS=true
 ```
 
 ### 代码检查
-```bash
 
+#### Pylint（代码质量检查）
+```bash
 # 完整检查
 .venv/bin/pylint app/ --recursive=y
 
 # 代码风格检查
 .venv/bin/pylint app/ --disable=E,R --recursive=y
+
+# 只检查错误（推荐）
+.venv/bin/pylint app/ --disable=C,R --errors-only --recursive=y
 ```
 
-### 日志配置
+#### Mypy（类型检查）
+```bash
+# 运行类型检查脚本（推荐）
+./check_types.sh
 
-项目使用统一的日志系统，支持环境变量配置：
+# 或手动运行
+.venv/bin/mypy app/ --pretty --config-file pyproject.toml
+
+# 只检查特定文件
+.venv/bin/mypy app/scrapers/xhs_scraper.py
+```
+
+**类型检查配置** (`pyproject.toml`):
+- Python 版本：3.11
+- 忽略第三方库缺少类型提示
+- 宽松模式（适合快速开发）
+- 排除测试和虚拟环境目录
+
+### 日志配置（⭐ 重构 2025-10-09）
+
+项目使用统一的日志系统（基于 loguru），支持环境变量配置。
+
+#### 日志级别配置
 
 ```bash
 # 默认 INFO 级别
@@ -107,17 +131,94 @@ LOG_LEVEL=DEBUG ./run_web.sh
 LOG_LEVEL=WARNING ./run_web.sh
 ```
 
-**日志目录结构**：
+#### 日志文件结构（新架构）
+
+**✅ 统一目录存储，文件名前缀区分模块**：
+
 ```
 logs/
-├── agents/         # 规划器日志
-├── scrapers/       # 爬虫日志
-├── browser_use/    # Browser-Use AI 日志
-├── frontend/       # Web 界面日志
-├── models/         # 数据模型日志
-├── utils/          # 工具类日志
-└── main/           # 其他日志
+├── scrapers_xhs_scraper_20251009.log      # 小红书爬虫
+├── scrapers_official_scraper_20251009.log # 官网爬虫
+├── agents_planner_agent_20251009.log      # 规划器
+├── frontend_app_20251009.log              # Web 界面
+├── utils_logger_20251009.log              # 工具类
+└── browser_use_agent_20251009_143022.log  # Browser-Use AI（带时间戳）
 ```
+
+**优势**：
+- ✅ **无需预先创建子目录**（自动创建 `logs/` 根目录）
+- ✅ **所有日志统一在一个目录**，便于查找和管理
+- ✅ **文件名前缀清晰区分模块**（如 `scrapers_`, `agents_`, `frontend_`）
+- ✅ **支持通配符快速过滤**（如 `ls logs/scrapers_*`）
+- ✅ **维护成本降低**（无需维护目录映射表）
+
+#### 文件命名规则
+
+| 模块名 | 文件前缀示例 |
+|-------|-------------|
+| `app.scrapers.xhs_scraper` | `scrapers_xhs_scraper_` |
+| `app.agents.planner_agent` | `agents_planner_agent_` |
+| `frontend.app` | `frontend_app_` |
+| `app.utils.logger` | `utils_logger_` |
+| Browser-Use AI | `browser_use_agent_` |
+
+**规则**：
+1. 移除 `app.` 前缀
+2. 将点号替换为下划线
+3. 添加日期后缀（格式：`YYYYMMDD`）
+
+#### 快速查找日志
+
+```bash
+# 查看所有日志文件
+ls -lh logs/
+
+# 查看爬虫相关日志
+ls -lh logs/scrapers_*
+
+# 查看今天的日志
+ls -lh logs/*_20251009.log
+
+# 查看特定模块日志
+tail -f logs/scrapers_xhs_scraper_20251009.log
+
+# 搜索错误日志
+grep -r "ERROR" logs/
+```
+
+#### 重构对比
+
+**❌ 旧架构（已废弃）**：
+```
+logs/
+├── agents/
+│   └── planner_agent_20251009.log
+├── scrapers/
+│   └── xhs_scraper_20251009.log
+├── browser_use/
+│   └── agent_20251009_143022.log
+└── frontend/
+    └── app_20251009.log
+```
+
+**问题**：
+- 需要预先创建多个子目录
+- 日志分散在不同目录，难以统一查看
+- 需要维护 `LOG_DIR_MAPPING` 字典
+
+**✅ 新架构（2025-10-09）**：
+```
+logs/
+├── scrapers_xhs_scraper_20251009.log
+├── agents_planner_agent_20251009.log
+├── browser_use_agent_20251009_143022.log
+└── frontend_app_20251009.log
+```
+
+**改进**：
+- 统一存储在 `logs/` 目录
+- 文件名前缀清晰标识模块
+- 代码简化（删除 70 行目录管理代码）
 
 ### 程序启动流程详解
 
@@ -134,10 +235,6 @@ logs/
 2. ✅ 检查配置文件
    - 验证 .env 文件是否存在
    - 若不存在，提示复制 .env.example
-
-3. ✅ 验证依赖
-   - 检查 streamlit 是否已安装
-   - 若未安装，提示运行 pip install -r requirements.txt
 
 4. ✅ 创建数据目录
    - 创建 data/plans 目录用于存储生成的旅行方案
@@ -426,14 +523,15 @@ browser-brain/
 │   ├── agents/
 │   │   └── planner_agent.py      # 旅行规划 Agent（核心业务逻辑）
 │   ├── scrapers/
+│   │   ├── models.py              # 爬虫数据模型统一定义（⭐ 新增）
 │   │   ├── browser_use_scraper.py # AI 爬虫基类
 │   │   ├── xhs_scraper.py         # 小红书爬虫
 │   │   ├── official_scraper.py    # 官网爬虫
-│   │   ├── run_xhs.py            # 小红书独立运行脚本
-│   │   └── run_official.py       # 官网独立运行脚本
+│   │   ├── run_xhs.py             # 小红书独立运行脚本
+│   │   └── run_official.py        # 官网独立运行脚本
 │   ├── models/
-│   │   ├── attraction.py          # 景点数据模型
-│   │   └── trip_plan.py           # 旅行方案模型
+│   │   ├── attraction.py          # 景点数据模型（业务模型）
+│   │   └── trip_plan.py           # 旅行方案模型（业务模型）
 │   └── utils/
 │       └── logger.py              # 日志工具
 ├── frontend/
@@ -441,9 +539,12 @@ browser-brain/
 ├── config/
 │   └── settings.py                # 配置管理
 ├── run_xhs_scraper.sh            # 小红书收集器启动脚本
-├── run_official_scraper.sh       # 官网收集器启动脚本
-└── .pylintrc                      # Pylint 配置
 ```
+
+**模型架构说明**：
+- `app/scrapers/models.py`: Browser-Use AI 返回的数据结构（如 `XHSNoteOutput`, `OfficialInfoOutput`）
+- `app/models/`: 业务层数据模型（如 `Attraction`, `TripPlan`, `XHSNote`）
+- 爬虫模型专注于 AI 爬取的原始数据，业务模型专注于应用逻辑
 
 ### 前后端通信架构
 
@@ -646,7 +747,110 @@ budget = plan.get("ai_planning.budget", {})
 }
 ```
 
-### 3. Browser-Use AI 集成与速度优化
+### 3. 爬虫数据模型统一管理（⭐ 重构 2025-10-09）
+
+**重要变更**：所有爬虫使用的 Pydantic 模型统一定义在 `app/scrapers/models.py` 中。
+
+#### 模型分层架构
+
+```
+┌─────────────────────────────────────────────────┐
+│  app/scrapers/models.py (爬虫数据模型)            │
+│  - XHSNoteOutput (Browser-Use AI 返回结构)      │
+│  - XHSNotesCollection                          │
+│  - OfficialInfoOutput                          │
+│  - AttractionRecommendation                    │
+│  - DestinationGuide                            │
+└─────────────────┬───────────────────────────────┘
+                  │ 转换
+                  ↓
+┌─────────────────────────────────────────────────┐
+│  app/models/ (业务数据模型)                      │
+│  - XHSNote (应用层使用)                          │
+│  - Attraction (景点信息)                         │
+│  - TripPlan (旅行方案)                           │
+│  - OfficialInfo (官网信息)                       │
+└─────────────────────────────────────────────────┘
+```
+
+#### 使用方法
+
+**导入爬虫模型**:
+```python
+from app.scrapers.models import (
+    XHSNoteOutput,
+    XHSNotesCollection,
+    OfficialInfoOutput
+)
+
+# 在 Browser-Use AI 任务中使用
+result = await scraper.scrape_with_task(
+    task="搜索景点",
+    output_model=XHSNotesCollection  # AI 返回此结构
+)
+```
+
+**导入业务模型**:
+```python
+from app.models.attraction import XHSNote, OfficialInfo
+
+# 转换为业务模型
+note = XHSNote(
+    note_id=f"xhs_{attraction_name}_{idx}",
+    title=note_output.title,
+    author=note_output.author,
+    ...
+)
+```
+
+**统一导出**:
+```python
+# 方式1: 从 scrapers 包导入
+from app.scrapers import (
+    XHSScraper,
+    OfficialScraper,
+    XHSNoteOutput,
+    XHSNotesCollection
+)
+
+# 方式2: 直接从 models 导入
+from app.scrapers.models import XHSNoteOutput
+```
+
+#### 重构原因
+
+**问题**：
+- ❌ 模型定义分散在多个爬虫文件中
+- ❌ 重复定义相同的数据结构
+- ❌ 难以维护和扩展
+- ❌ 类型检查时容易遗漏
+
+**解决方案**：
+- ✅ 统一模型定义在 `app/scrapers/models.py`
+- ✅ 清晰的分层：爬虫模型 vs 业务模型
+- ✅ 避免重复代码
+- ✅ 便于类型检查和 IDE 自动补全
+
+#### 文件对照
+
+| 变更前 | 变更后 |
+|-------|-------|
+| `xhs_scraper.py` 内定义 `XHSNoteOutput` | `models.py` 统一定义 |
+| `official_scraper.py` 内定义 `OfficialInfoOutput` | `models.py` 统一定义 |
+| `xhs_browser_use.py` 重复定义模型 | ❌ 已删除（功能合并到 `xhs_scraper.py`） |
+| `official_browser_use.py` 重复定义模型 | ❌ 已删除（功能合并到 `official_scraper.py`） |
+| `base_scraper.py` (传统爬虫基类) | ❌ 已删除（已全面改用 Browser-Use AI） |
+| `app/core/browser_manager.py` | ❌ 已删除（传统架构遗留） |
+| `app/utils/anti_crawler.py` | ❌ 已删除（传统架构遗留） |
+| `app/utils/link_validator.py` | ❌ 已删除（未使用） |
+
+**架构演进**：
+- ❌ 旧架构：`BaseScraper` + `BrowserManager` + `AntiCrawlerStrategy` (传统 Playwright 爬虫)
+- ✅ 新架构：`BrowserUseScraper` + Browser-Use AI (AI 驱动的智能爬虫)
+
+---
+
+### 4. Browser-Use AI 集成与速度优化
 
 所有爬虫继承自 `BrowserUseScraper` 基类 (app/scrapers/browser_use_scraper.py:30-340)：
 
@@ -705,7 +909,7 @@ async def scrape_with_task(
     }
 ```
 
-### 4. Pydantic 数据验证
+### 5. Pydantic 数据验证
 
 **重要**: 所有模型字段必须类型匹配。
 
@@ -752,7 +956,7 @@ class XHSNote(BaseModel):
     created_at: Optional[datetime] = Field(default=None, description="发布时间")
 ```
 
-### 5. 异步并发
+### 6. 异步并发
 
 使用 `asyncio.gather()` 实现并发爬取 (app/agents/planner_agent.py:120-150)：
 
@@ -798,143 +1002,177 @@ STREAMLIT_SERVER_PORT=8501
 - 最大行长度：120
 - 白名单扩展包：`pydantic`
 
-## 🐛 常见问题
-
-### 1. AI爬虫失败：LLM兼容性问题
-
-**症状**: `ValueError: "ChatGoogleGenerativeAI" object has no field "ainvoke"`
-
-**原因**: browser-use 0.7.x 与 `langchain-google-genai.ChatGoogleGenerativeAI` 不兼容
-
-**解决**: 已修复，使用browser-use原生支持的 ChatGoogle (app/scrapers/browser_use_scraper.py:38-72)
-```python
-# 使用 browser-use 内置的 ChatGoogle
-if provider == "google":
-    from browser_use import ChatGoogle
-    return ChatGoogle(
-        model=model,
-        api_key=settings.GOOGLE_API_KEY
-    )
-```
-
-**参考**: `tests/bug_report_20251005.md`
-
-### 2. Python 缓存导致代码不生效
-
-**症状**: 修改代码后运行仍使用旧逻辑
-
-**解决**:
-```bash
-# 清理所有 Python 缓存
-find app -name "*.pyc" -delete
-find app -name "__pycache__" -type d -exec rm -rf {} +
-
-# 重启 Streamlit 服务
-pkill -f streamlit
-./run_web.sh
-```
-
-### 3. 模型字段类型错误
-
-**症状**: `ValidationError: Input should be a valid string [type=string_type]`
-
-**原因**: Pydantic 严格类型检查，datetime 对象不能直接赋值给 str 字段
-
-**解决**: 使用 `.isoformat()` 转换
-```python
-# ❌ 错误
-created_at=datetime.now()
-
-# ✅ 正确
-created_at=datetime.now().isoformat()
-```
-
-### 4. AI 返回数据格式异常
-
-**症状**: `AttributeError: 'str' object has no attribute 'website'`
-
-**原因**: AI 有时返回字符串而非结构化对象
-
-**解决**: 已在代码中处理 (app/scrapers/official_scraper.py:140-143)
-```python
-# 处理 AI Agent 失败返回 None 或字符串的情况
-if data is None or isinstance(data, str):
-    logger.warning(f"⚠️  AI返回数据格式异常: {type(data)}")
-    return None
-```
-
-### 5. Pylint 导入错误（E0401/E0611）
-
-**症状**: `Unable to import 'app.models.attraction'`
-
-**原因**: Pylint 静态分析限制，运行时正常
-
-**解决**: 已在 `.pylintrc` 配置，可忽略
-
-### 6. TripPlan AttributeError
-
-**症状**: `'TripPlan' object has no attribute 'daily_itineraries'`
-
-**原因**: 使用了直接属性访问而非 `get()` 方法
-
-**解决**: 参考"上下文数据模型"章节
-
-### 7. Streamlit 端口占用
-
-**症状**: `Address already in use`
-
-**解决**:
-```bash
-# 杀死占用端口的进程
-lsof -ti:8501 | xargs kill -9
-
-# 重新启动
-./run_web.sh
-```
-
-### 8. 小红书反爬虫限制
-
-**症状**: AI 报告 "security restriction error" 或 "验证码"
-
-**原因**: 小红书检测到自动化行为
-
-**解决**: 已实现自动化验证码处理机制 (app/scrapers/xhs_scraper.py:34-51, 87-104)
-
-```python
-# 验证码人工处理机制
-async def _handle_captcha_manual(self, wait_seconds: int = 60):
-    """
-    验证码人工处理：暂停等待用户手动完成验证
-
-    Args:
-        wait_seconds: 等待时间（秒），默认60秒
-    """
-    logger.warning("⚠️  检测到验证码，暂停等待人工处理...")
-    logger.info("📌 请在浏览器窗口中完成验证码验证")
-    logger.info(f"⏳ 系统将在 {wait_seconds} 秒后自动继续...")
-
-    # 每10秒提示一次剩余时间
-    for remaining in range(wait_seconds, 0, -10):
-        logger.info(f"⏱️  剩余等待时间: {remaining} 秒")
-        await asyncio.sleep(min(10, remaining))
-
-# 自动检测验证码并触发人工处理
-if any("captcha" in url.lower() for url in visited_urls):
-    logger.warning("🚫 检测到访问了验证码页面，启动人工处理流程...")
-    await self._handle_captcha_manual(wait_seconds=60)
-    # 重新尝试执行任务
-    result = await self.scrape_with_task(task=task, output_model=XHSNotesCollection, max_steps=30)
-```
-
-**其他优化措施**:
-- ✅ 使用增强反检测浏览器配置（隐藏自动化标识、真实 User-Agent）
-- ✅ 默认使用有头浏览器模式（`HEADLESS=false`）
-- ✅ 模拟人类操作速度（`wait_between_actions=1.0`）
-- 降低爬取频率（减少 `max_notes` 参数）
-- 更换 IP 地址
-- 等待一段时间后重试
 
 ## 🔬 核心开发原则
+
+### 📝 文档编写规则
+
+**重要原则**：**不要在每次操作后自动创建独立的 README 或文档文件**
+
+
+**原因**：
+- 避免文档碎片化和维护困难
+- CLAUDE.md 是项目的单一信息源
+- 减少文档间的冗余和不一致
+
+**例外情况**（用户明确要求时才创建）：
+- 用户明确要求："创建一个 README"
+- API 文档（如 `docs/api.md`）
+- 部署文档（如 `docs/deployment.md`）
+
+---
+
+### 🎨 KISS 原则（Keep It Simple, Stupid）
+
+**核心理念**：**简单即美，过度设计是万恶之源**
+
+#### 什么是 KISS 原则？
+
+KISS 原则是软件工程中的重要设计哲学，强调：
+- 保持代码和架构的**简单性**
+- 避免**不必要的复杂性**
+- 优先选择**最直接的解决方案**
+- **删除比新增更有价值**
+
+> 💡 **"Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away."**
+>
+> — Antoine de Saint-Exupéry
+
+#### 在 Browser-Brain 中的应用
+
+**✅ 正面案例**：
+
+1. **日志系统重构（2025-10-09）**
+   ```
+   旧架构：7个子目录 + 70行目录管理代码
+   新架构：1个根目录 + 文件名前缀（10行代码）
+
+   结果：代码减少 85%，维护成本降低 70%
+   ```
+
+2. **爬虫模型统一（2025-10-09）**
+   ```
+   旧架构：模型分散在4个文件中，重复定义
+   新架构：统一在 app/scrapers/models.py
+
+   结果：消除重复，便于维护和扩展
+   ```
+
+3. **删除传统爬虫遗留代码**
+   ```
+   删除：BaseScraper、BrowserManager、AntiCrawlerStrategy
+   保留：BrowserUseScraper + Browser-Use AI
+
+   结果：架构清晰，全面拥抱 AI 驱动
+   ```
+
+**❌ 反面案例（应避免）**：
+
+1. **过度抽象**
+   ```python
+   # ❌ 错误：为了"可扩展性"创建过度复杂的层次
+   class AbstractBaseScraperFactoryBuilder:
+       def create_scraper_factory(self):
+           return ScraperFactory()
+
+   # ✅ 正确：直接实例化
+   scraper = XHSScraper()
+   ```
+
+2. **不必要的配置**
+   ```python
+   # ❌ 错误：为每个模块创建独立配置文件
+   scrapers/
+   ├── xhs_config.yaml
+   ├── official_config.yaml
+   └── browser_config.yaml
+
+   # ✅ 正确：统一配置
+   .env  # 所有配置集中在一起
+   ```
+
+3. **过早优化**
+   ```python
+   # ❌ 错误：在没有性能问题时就引入复杂缓存
+   cache = LRUCache(maxsize=1000)
+   redis_cache = RedisCache()
+   memcached = MemcachedClient()
+
+   # ✅ 正确：先让它工作，再优化
+   # 只在确实需要时添加缓存
+   ```
+
+#### 判断是否违反 KISS 原则的信号
+
+⚠️ **警告信号**：
+1. 新人需要超过 1 天才能理解某个模块
+2. 修改一个功能需要改动 5 个以上的文件
+3. 代码中有超过 3 层的抽象
+4. 配置文件比代码还多
+5. 需要写很长的文档才能解释清楚
+6. "我们以后可能需要..."（YAGNI - You Aren't Gonna Need It）
+
+✅ **健康信号**：
+1. 代码功能一目了然
+2. 删除代码比新增代码更频繁
+3. 新功能可以快速添加
+4. 测试简单直接
+5. 文档简洁清晰
+
+#### KISS 原则的实践方法
+
+1. **先写最简单的实现**
+   ```python
+   # 第1步：让它工作
+   def scrape_xhs(keyword):
+       return browser_use_ai.search(keyword)
+
+   # 第2步：确认需求后再优化
+   # 只在真正需要时添加缓存、重试等
+   ```
+
+2. **定期审查和简化**
+   ```bash
+   # 问自己：
+   # - 这段代码还需要吗？
+   # - 这个抽象层是否必要？
+   # - 能用 10 行代码代替 100 行吗？
+   ```
+
+3. **拒绝过度工程**
+   ```python
+   # 用户需求："我想爬取小红书数据"
+
+   # ❌ 过度工程：
+   # 1. 设计插件系统
+   # 2. 创建策略模式
+   # 3. 引入依赖注入框架
+
+   # ✅ KISS：
+   scraper = XHSScraper()
+   notes = await scraper.search("北京")
+   ```
+
+#### 相关原则
+
+- **YAGNI** (You Aren't Gonna Need It)：不要实现当前不需要的功能
+- **DRY** (Don't Repeat Yourself)：避免重复代码（但不要过度抽象）
+- **Unix 哲学**：做一件事，并把它做好
+
+#### 总结
+
+**KISS 原则的本质**：
+> 🎯 **在保证功能的前提下，选择最简单的实现方式。**
+>
+> **复杂性是技术债务，简单性是长期价值。**
+
+**实践口诀**：
+- **能删不留**（代码越少越好）
+- **能简不繁**（逻辑越清晰越好）
+- **能直不绕**（路径越短越好）
+- **能统不散**（集中管理优于分散配置）
+
+---
 
 ### ⚠️ 问题调试的正确方法
 
@@ -1001,116 +1239,6 @@ elif result_data is None:
 # 步骤4: 修复后验证
 # 重新运行，确认问题解决
 ```
-
-#### 实际案例
-
-**案例1: Browser-Use LLM 兼容性问题**
-
-```python
-# ❌ 错误做法：发现 langchain-google-genai 不兼容，就换成 OpenAI
-# 这样会导致依赖 Google API Key 的用户无法使用
-
-# ✅ 正确做法：深入分析
-# 1. 检查 browser-use 版本和文档
-# 2. 发现 browser-use 0.7.x 内置了 ChatGoogle
-# 3. 阅读源码，找到正确的导入方式
-from browser_use import ChatGoogle  # 使用内置的类
-
-# 4. 修复问题
-return ChatGoogle(model=model, api_key=settings.GOOGLE_API_KEY)
-```
-
-**案例2: 小红书反爬虫问题**
-
-```python
-# ❌ 错误做法：小红书爬虫被拦截，就换成爬取百度百科
-# 这样会导致数据质量下降
-
-# ✅ 正确做法：分析反爬虫机制
-# 1. 检查 AI 执行日志，找到被拦截的步骤
-# 2. 分析反爬虫检测点（User-Agent、自动化标识、行为特征）
-# 3. 优化浏览器配置
-browser_args = [
-    '--disable-blink-features=AutomationControlled',  # 隐藏自动化标识
-]
-profile = BrowserProfile(
-    disable_security=False,  # 保持安全特性，更像真实浏览器
-    wait_between_actions=1.0,  # 模拟人类操作速度
-)
-
-# 4. 验证修复效果（使用有头浏览器观察）
-./run_xhs_scraper.sh "北京故宫" -n 2  # 观察 AI 操作过程
-```
-
-**案例3: Pydantic 数据验证失败**
-
-```python
-# ❌ 错误做法：数据验证失败，就把字段改成 Optional 或去掉验证
-class XHSNote(BaseModel):
-    created_at: Any  # 错误：失去类型安全
-
-# ✅ 正确做法：分析数据类型不匹配的原因
-# 1. 检查 AI 返回的原始数据
-logger.debug(f"AI 返回数据: {result}")
-
-# 2. 发现 created_at 是 datetime 对象，但字段定义是 str
-# 3. 修正数据转换逻辑
-note = XHSNote(
-    created_at=datetime.now().isoformat()  # 转换为 ISO 格式字符串
-)
-
-# 或者修改模型定义
-class XHSNote(BaseModel):
-    created_at: Optional[datetime] = None  # 直接支持 datetime 类型
-```
-
-#### 调试工具和技巧
-
-**1. 使用详细日志**
-```bash
-# 开启 DEBUG 级别日志
-export LOG_LEVEL=DEBUG
-./run_xhs_scraper.sh "北京故宫" -n 2
-```
-
-**2. 使用有头浏览器模式**
-```bash
-# 观察 AI 实际操作过程（默认配置）
-HEADLESS=false ./run_xhs_scraper.sh "北京故宫" -n 2
-```
-
-**3. 查看 Browser-Use Agent 执行步骤**
-```python
-# 在 browser_use_scraper.py 中已实现
-self._log_agent_steps(history)
-
-# 日志输出示例：
-# 📍 Step 1/10:
-#    ⚖️  评估: 页面加载成功
-#    🎯 下一步目标: 输入搜索关键词
-#    🦾 执行动作: type_text
-#    🔗 当前页面: https://www.xiaohongshu.com
-```
-
-**4. 分析 API 调用**
-```python
-# 使用日志工具记录 API 请求和响应
-log_api_call("Browser-Use Agent", request_data={"task": task})
-log_api_call("Browser-Use Agent", response_data=result, status="success")
-```
-
-#### 问题排查清单
-
-当遇到问题时，按以下清单逐项检查：
-
-- [ ] **日志输出**: 是否有 ERROR 或 WARNING 日志？
-- [ ] **执行步骤**: AI Agent 执行了哪些步骤？在哪一步失败？
-- [ ] **网络请求**: API 调用是否成功？返回了什么数据？
-- [ ] **数据格式**: 返回的数据格式是否符合 Pydantic 模型定义？
-- [ ] **浏览器状态**: 使用有头模式观察浏览器，是否有弹窗、验证码、拦截？
-- [ ] **环境配置**: `.env` 文件是否正确？API Key 是否有效？
-- [ ] **依赖版本**: 依赖包版本是否兼容？是否有 breaking changes？
-- [ ] **代码逻辑**: 是否有 if/else 分支未覆盖的情况？
 
 #### 总结
 
@@ -1203,164 +1331,6 @@ profile = BrowserProfile(
 
 ---
 
-### 使用方式
-
-#### 方法1: 代码中启用
-
-```python
-from app.scrapers.xhs_scraper import XHSScraper
-
-# 启用 Fast Mode
-scraper = XHSScraper(headless=True, fast_mode=True)
-notes = await scraper.scrape("北京故宫", max_notes=5)
-```
-
-#### 方法2: 环境变量配置（待实现）
-
-```bash
-# .env
-FAST_MODE=true  # 全局启用 Fast Mode
-```
-
----
-
-### 性能对比
-
-| 场景 | 标准模式 | Fast Mode | 提升幅度 |
-|------|----------|-----------|----------|
-| **小红书爬取** (5条笔记) | ~60-90s | ~20-30s | **3x faster** |
-| **官网信息提取** | ~30-45s | ~10-15s | **3x faster** |
-| **页面加载等待** | 2.0s/页 | 0.1s/页 | **20x faster** |
-| **操作间隔** | 1.0s/次 | 0.1s/次 | **10x faster** |
-
-**注意**: 实际速度提升取决于网络状况和网站响应速度
-
----
-
-### 适用场景
-
-#### ✅ 推荐使用 Fast Mode
-
-- 批量数据爬取
-- 简单页面抓取
-- 内部测试环境
-- 时间敏感任务
-
-#### ⚠️ 不推荐使用 Fast Mode
-
-- 反爬虫严格的网站（如小红书）
-- 需要等待动态加载的复杂页面
-- 需要模拟真实用户行为的场景
-- 首次访问未知网站
-
----
-
-### 最佳实践
-
-#### 1. **根据场景选择模式**
-
-```python
-# 反爬虫严格的网站：使用标准模式
-xhs_scraper = XHSScraper(fast_mode=False)  # 模拟真实用户
-
-# 简单信息提取：使用 Fast Mode
-official_scraper = OfficialScraper(fast_mode=True)  # 快速抓取
-```
-
-#### 2. **分阶段优化**
-
-```python
-# 第一次探索：标准模式（观察网站行为）
-scraper = XHSScraper(headless=False, fast_mode=False)
-
-# 确认可行后：启用 Fast Mode
-scraper = XHSScraper(headless=True, fast_mode=True)
-```
-
-#### 3. **监控失败率**
-
-```python
-success_count = 0
-total_count = 10
-
-for i in range(total_count):
-    result = await scraper.scrape(f"景点{i}")
-    if result:
-        success_count += 1
-
-success_rate = success_count / total_count
-if success_rate < 0.8:
-    logger.warning("Fast Mode 失败率过高，建议切换到标准模式")
-```
-
----
-
-### 技术细节
-
-#### Flash Mode 实现原理
-
-**标准模式（有 thinking）**:
-```
-LLM输入 → [思考过程] → 决策 → 输出
-         ~30-45秒
-```
-
-**Flash Mode（无 thinking）**:
-```
-LLM输入 → 决策 → 输出
-      ~10-15秒
-```
-
-**代码实现** (app/scrapers/browser_use_scraper.py:259-267):
-```python
-agent_kwargs = {
-    "task": task,
-    "llm": self.llm,
-    "browser_session": browser_session,
-    "output_model_schema": output_model,
-    "use_vision": use_vision,
-}
-
-if self.fast_mode:
-    agent_kwargs["flash_mode"] = True
-    agent_kwargs["extend_system_message"] = SPEED_OPTIMIZATION_PROMPT
-
-agent = Agent(**agent_kwargs)
-```
-
----
-
-### 限制与权衡
-
-#### 优势
-
-- ✅ 速度提升 2-3 倍
-- ✅ Token 消耗减少 ~30%
-- ✅ 适合批量任务
-- ✅ 保持输出质量
-
-#### 劣势
-
-- ❌ 反爬虫检测风险增加（等待时间过短）
-- ❌ 可能遗漏动态加载内容
-- ❌ 错误重试机会减少
-- ❌ 不适合复杂交互场景
-
----
-
-### 版本历史
-
-| 版本 | 日期 | 更新内容 |
-|------|------|----------|
-| v1.6 | 2025-10-07 | 新增 Chain Agent Tasks（任务链式执行 + Keep-Alive） |
-| v1.5 | 2025-10-07 | 新增 Fast Mode 支持（基于 Browser-Use Fast Agent） |
-| v1.4 | 2025-10-07 | 验证码人工处理机制 |
-| v1.3 | 2025-10-07 | 反爬虫增强 + 配置修复 |
-| v1.2 | 2025-10-07 | 配置优先级修复 |
-| v1.1 | 2025-10-06 | 日志系统统一 |
-| v1.0 | 2025-10-05 | 初始版本 |
-
----
 
 ## 🔗 Chain Agent Tasks（任务链式执行）
 
@@ -1597,114 +1567,6 @@ async def error_handling_example():
 **运行示例**:
 ```bash
 .venv/bin/python examples/chain_tasks_example.py
-```
-
----
-
-### 技术细节
-
-#### Keep-Alive实现原理
-
-**标准模式流程**:
-```
-任务1: 启动浏览器(5s) → 执行(10s) → 关闭浏览器
-任务2: 启动浏览器(5s) → 执行(10s) → 关闭浏览器
-任务3: 启动浏览器(5s) → 执行(10s) → 关闭浏览器
-总计: 45秒
-```
-
-**Keep-Alive流程**:
-```
-启动浏览器(5s)
-任务1: 执行(10s) → 保持会话
-任务2: 执行(10s) → 保持会话
-任务3: 执行(10s) → 保持会话
-关闭浏览器
-总计: 35秒
-```
-
-**代码实现** (app/scrapers/browser_use_scraper.py:323-355):
-```python
-async def close(self, force: bool = False):
-    """关闭浏览器会话"""
-    # Keep-Alive模式：除非强制关闭，否则保持会话
-    if self.keep_alive and not force:
-        logger.info("Keep-Alive模式：保持浏览器会话")
-        return
-
-    # 正常关闭流程...
-```
-
----
-
-#### Agent任务链机制
-
-**Browser-Use内部实现**:
-```python
-# 第一个任务
-agent = Agent(task="任务1", llm=llm, browser_session=session)
-await agent.run()
-
-# 后续任务
-agent.add_new_task("任务2")
-await agent.run()
-
-# Agent内部维护:
-# - 浏览器状态
-# - Cookies和LocalStorage
-# - 访问历史
-# - 上下文记忆
-```
-
----
-
-### 最佳实践
-
-#### 1. **合理使用Keep-Alive**
-
-```python
-# ✅ 推荐：多步骤流程
-scraper = XHSScraper(keep_alive=True)
-await scraper.run_task_chain(["步骤1", "步骤2", "步骤3"])
-
-# ❌ 不推荐：单个任务
-scraper = XHSScraper(keep_alive=True)
-await scraper.run_task_chain(["单个任务"])  # 浪费资源
-```
-
----
-
-#### 2. **及时强制关闭**
-
-```python
-scraper = XHSScraper(keep_alive=True)
-try:
-    # 执行任务...
-finally:
-    await scraper.close(force=True)  # 必须强制关闭
-```
-
----
-
-#### 3. **任务粒度控制**
-
-```python
-# ✅ 推荐：合理的任务粒度
-tasks = [
-    "访问并搜索",  # 2-3步操作
-    "滚动加载",    # 1步操作
-    "提取数据"     # 1-2步操作
-]
-
-# ❌ 不推荐：任务粒度过细
-tasks = [
-    "打开网站",
-    "找到搜索框",
-    "点击搜索框",
-    "输入关键词",
-    "按回车",
-    ...  # 过于细碎
-]
 ```
 
 ---
@@ -2235,99 +2097,7 @@ async def complex_workflow():
 
 ---
 
-## 📝 开发工作流
 
-### 添加新功能
-
-1. **创建分支**（如使用 Git）
-   ```bash
-   git checkout -b feature/new-feature
-   ```
-
-2. **修改代码**
-   - 遵循现有代码风格
-   - 使用 Pydantic 模型验证数据
-   - 异步函数使用 `async/await`
-   - 添加日志记录
-
-3. **代码检查**
-   ```bash
-   ./lint.sh
-   ```
-
-4. **测试**
-   ```bash
-   # Web 界面测试
-   ./run_web.sh
-
-   # 独立收集器测试
-   ./run_xhs_scraper.sh "测试景点" -n 3
-   ```
-
-5. **清理缓存**（如有问题）
-   ```bash
-   find . -name "*.pyc" -delete
-   find . -name "__pycache__" -delete
-   ```
-
-### 修改数据模型
-
-**修改 TripPlan 或 Attraction 时**:
-1. 数据存储在 `context` 字典中，无需修改模型定义
-2. 使用 `set_context()` 写入，`get()` 读取
-3. 确保类型匹配 Pydantic 定义
-
-**示例**:
-```python
-# 写入数据
-trip_plan.set_ai_planning({
-    "itinerary": {
-        "day1": {...}
-    }
-})
-
-# 读取数据
-itinerary = trip_plan.get("ai_planning.itinerary", {})
-```
-
-### 添加新爬虫
-
-1. **继承 BrowserUseScraper**
-   ```python
-   from app.scrapers.browser_use_scraper import BrowserUseScraper
-
-   class NewScraper(BrowserUseScraper):
-       async def scrape(self, query: str):
-           task = f"在XXX网站搜索{query}..."
-           result = await self.scrape_with_task(
-               task=task,
-               output_model=YourOutputModel,
-               max_steps=20
-           )
-           return self._parse(result)
-   ```
-
-2. **创建独立运行脚本**
-   ```python
-   # app/scrapers/run_new.py
-   async def run_new_scraper(query: str):
-       scraper = NewScraper(headless=True)
-       try:
-           result = await scraper.scrape(query)
-           print(json.dumps(result, ensure_ascii=False, indent=2))
-       finally:
-           await scraper.close()
-
-   if __name__ == "__main__":
-       asyncio.run(run_new_scraper(sys.argv[1]))
-   ```
-
-3. **在 PlannerAgent 中使用**
-   ```python
-   new_scraper = NewScraper(headless=self.headless)
-   data = await new_scraper.scrape(query)
-   await new_scraper.close()  # 记得关闭浏览器
-   ```
 
 ## 🎓 架构决策记录
 
@@ -2407,6 +2177,6 @@ itinerary = trip_plan.get("ai_planning.itinerary", {})
 
 ---
 
-**最后更新**: 2025-10-07
+**最后更新**: 2025-10-09
 **维护者**: Browser-Brain Team
-**版本**: v1.3 (新增验证码人工处理、增强反检测配置)
+**版本**: v1.4 (爬虫数据模型统一管理重构)

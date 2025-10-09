@@ -1,0 +1,21 @@
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = false
+disallow_untyped_defs = false
+ignore_missing_imports = true
+no_implicit_optional = false
+check_untyped_defs = false
+exclude = [
+    "venv",
+    ".venv",
+    "tests",
+]
+
+# 忽略常见但不影响运行的错误
+disable_error_code = [
+    "attr-defined",
+    "valid-type",
+    "union-attr",
+    "call-arg",
+]

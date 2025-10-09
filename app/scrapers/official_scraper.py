@@ -1,29 +1,17 @@
 """基于Browser-Use的官网AI爬虫"""
 from typing import List, Optional
-from pydantic import BaseModel, Field
+
 from app.scrapers.browser_use_scraper import BrowserUseScraper
+from app.scrapers.models import OfficialInfoOutput
 from app.models.attraction import OfficialInfo, XHSNote
-from app.utils.logger import setup_logger, log_function_call, log_step
+from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
-
-
-# 定义官网信息的结构化输出模型
-class OfficialInfoOutput(BaseModel):
-    """官网信息输出"""
-    website: Optional[str] = Field(None, description="官方网站URL")
-    opening_hours: Optional[str] = Field(None, description="开放时间")
-    ticket_price: Optional[str] = Field(None, description="门票价格")
-    booking_method: Optional[str] = Field(None, description="预订方式")
-    address: Optional[str] = Field(None, description="地址")
-    phone: Optional[str] = Field(None, description="联系电话")
-    description: Optional[str] = Field(None, description="景点描述")
 
 
 class OfficialScraper(BrowserUseScraper):
     """基于Browser-Use的官网AI爬虫"""
 
-    @log_function_call
     async def get_official_info(
         self,
         attraction_name: str,
@@ -46,7 +34,7 @@ class OfficialScraper(BrowserUseScraper):
         """
         logger.info(f"========== 开始官网信息爬取 ==========")
         logger.info(f"目标景点: {attraction_name}, 参考笔记数: {len(xhs_notes)}")
-        log_step(1, "准备官网信息爬取任务", attraction=attraction_name)
+        logger.info(f"📍 STEP 1: 准备官网信息爬取任务 | attraction={attraction_name}")
 
         # 从小红书笔记中收集所有链接
         collected_links = []
@@ -119,14 +107,14 @@ class OfficialScraper(BrowserUseScraper):
 """
 
         # 使用AI执行爬取
-        log_step(2, "调用Browser-Use AI执行官网信息爬取")
+        logger.info("📍 STEP 2: 调用Browser-Use AI执行官网信息爬取")
         result = await self.scrape_with_task(
             task=task,
             output_model=OfficialInfoOutput,
             max_steps=25
         )
 
-        log_step(3, "处理AI返回结果", status=result["status"])
+        logger.info(f"📍 STEP 3: 处理AI返回结果 | status={result['status']}")
 
         if result["status"] != "success":
             logger.warning(f"⚠️  AI获取官网信息失败: {result.get('error', 'Unknown error')}")
@@ -143,7 +131,7 @@ class OfficialScraper(BrowserUseScraper):
             return None
 
         logger.info(f"AI成功返回官网信息数据")
-        log_step(4, "转换数据为OfficialInfo对象")
+        logger.info("📍 STEP 4: 转换数据为OfficialInfo对象")
 
         official_info = OfficialInfo(
             name=attraction_name,
