@@ -1,6 +1,6 @@
 """基于Browser-Use的小红书AI爬虫"""
 import asyncio
-from typing import List
+from typing import List, Dict
 from datetime import datetime
 
 from app.scrapers.browser_use_scraper import BrowserUseScraper
@@ -37,7 +37,7 @@ class XHSScraper(BrowserUseScraper):
         max_retries = 2
         for attempt in range(max_retries):
             logger.info(f"📍 STEP 2: 调用Browser-Use AI执行小红书爬取（尝试 {attempt + 1}/{max_retries}）")
-            result = await self.scrape_with_task(
+            result = await self.scrape(
                 task=task,
                 output_model=XHSNotesCollection,
                 max_steps=30
@@ -83,7 +83,6 @@ class XHSScraper(BrowserUseScraper):
 
         for idx, note_output in enumerate(notes_data.notes):
             note = XHSNote(
-                note_id=f"xhs_{attraction_name}_{idx}",
                 title=note_output.title,
                 author=note_output.author,
                 content=note_output.content,
@@ -91,8 +90,6 @@ class XHSScraper(BrowserUseScraper):
                 collects=note_output.collects,
                 comments=note_output.comments,
                 images=note_output.images[:5],  # 最多5张图片
-                extracted_links=note_output.extracted_links,
-                keywords=note_output.keywords,
                 created_at=datetime.now().isoformat()  # 转换为ISO格式字符串
             )
             xhs_notes.append(note)
@@ -102,7 +99,7 @@ class XHSScraper(BrowserUseScraper):
         logger.info(f"========== 小红书爬取完成 ==========")
         return xhs_notes
 
-    async def search_destination_guide(self, destination: str, max_attractions: int = 5) -> List[str]:
+    async def search_destination_guide(self, destination: str, max_attractions: int = 5) -> DestinationGuide:
         """
         搜索目的地旅游攻略，提取推荐景点列表
 
@@ -121,10 +118,10 @@ class XHSScraper(BrowserUseScraper):
         task = XHSPrompts.search_destination_guide_task(destination, max_attractions)
 
         # 简单重试逻辑
-        max_retries = 2
+        max_retries = 5
         for attempt in range(max_retries):
             logger.info(f"📍 STEP 2: 调用Browser-Use AI执行目的地攻略爬取（尝试 {attempt + 1}/{max_retries}）")
-            result = await self.scrape_with_task(
+            result = await self.scrape(
                 task=task,
                 output_model=DestinationGuide,
                 max_steps=30
@@ -134,19 +131,19 @@ class XHSScraper(BrowserUseScraper):
                 break
 
             if attempt < max_retries - 1:
-                logger.warning("⏳ 等待5秒后重试...")
-                await asyncio.sleep(5)
+                logger.warning("⏳ 等待30秒后重试...")
+                await asyncio.sleep(30)
 
         logger.info(f"📍 STEP 3: 处理AI返回结果 | status={result['status']}")
 
         if result["status"] != "success" or not result.get("is_successful"):
             logger.error(f"❌ AI爬取目的地攻略失败: {result.get('error', 'Unknown error')}")
-            return []
+            return DestinationGuide(recommended_attractions=[], status="error", msg="爬取失败")
 
         guide_data = result["data"]
         if not guide_data:
             logger.error("❌ AI未返回任何数据")
-            return []
+            return DestinationGuide(recommended_attractions=[], status="error", msg="未返回数据")
 
         logger.info(f"AI成功返回 {len(guide_data.recommended_attractions)} 个推荐景点")
         logger.info(f"📍 STEP 4: 提取景点名称列表 | attraction_count={len(guide_data.recommended_attractions)}")
@@ -159,24 +156,58 @@ class XHSScraper(BrowserUseScraper):
         )
 
         # 提取景点名称
-        attraction_names = []
+        attraction = []
         for attr in sorted_attractions[:max_attractions]:
-            attraction_names.append(attr.name)
-            logger.info(f"  📍 {attr.name} (优先级: {attr.priority}) - {attr.reason[:50]}...")
+            attraction.append(attr)
 
-        logger.info(f"✅ 成功提取 {len(attraction_names)} 个推荐景点")
-        logger.info(f"========== 目的地攻略搜索完成 ==========")
-        return attraction_names
+        guide_data.recommended_attractions = attraction
+        return guide_data
 
-    async def scrape(self, attraction_name: str, max_notes: int = 10) -> List[XHSNote]:
+    async def search_attractions_batch(
+        self,
+        attractions: List[str],
+        max_notes: int = 5,
+        max_concurrent: int = 5
+    ) -> Dict[str, List[XHSNote]]:
         """
-        实现基类的抽象方法
+        批量并发爬取多个景点的小红书笔记
 
         Args:
-            attraction_name: 景点名称
-            max_notes: 最大笔记数
+            attractions: 景点名称列表
+            max_notes: 每个景点的最大笔记数
+            max_concurrent: 最大并发数（默认5）
 
         Returns:
-            笔记列表
+            字典 {景点名: [笔记列表]}
         """
-        return await self.search_attraction(attraction_name, max_notes)
+
+        def create_task(attraction_name: str) -> str:
+            """生成任务提示词"""
+            return XHSPrompts.search_attraction_task(attraction_name, max_notes)
+
+        def parse_notes(notes_data: XHSNotesCollection) -> List[XHSNote]:
+            """解析笔记数据"""
+            return [
+                XHSNote(
+                    title=note.title,
+                    author=note.author,
+                    content=note.content,
+                    likes=note.likes,
+                    collects=note.collects,
+                    comments=note.comments,
+                    images=note.images[:5],
+                    created_at=datetime.now().isoformat()
+                )
+                for note in notes_data.notes
+            ]
+
+        # 调用基类的批量爬取方法
+        return await self.scrape_batch(
+            items=attractions,
+            scrape_task_fn=create_task,
+            parse_result_fn=parse_notes,
+            output_model=XHSNotesCollection,
+            max_concurrent=max_concurrent,
+            max_steps=30,
+            item_label="景点"
+        )

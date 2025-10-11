@@ -57,7 +57,7 @@ class OfficialScraper(BrowserUseScraper):
 
         # 使用AI执行爬取
         logger.info("📍 STEP 2: 调用Browser-Use AI执行官网信息爬取")
-        result = await self.scrape_with_task(
+        result = await self.scrape(
             task=task,
             output_model=OfficialInfoOutput,
             max_steps=25
@@ -99,20 +99,3 @@ class OfficialScraper(BrowserUseScraper):
         logger.debug(f"门票: {official_info.ticket_price}")
         logger.info(f"========== 官网信息爬取完成 ==========")
         return official_info
-
-    async def scrape(
-        self,
-        attraction_name: str,
-        xhs_notes: List[XHSNote]
-    ) -> Optional[OfficialInfo]:
-        """
-        实现基类的抽象方法
-
-        Args:
-            attraction_name: 景点名称
-            xhs_notes: 小红书笔记列表
-
-        Returns:
-            官方信息
-        """
-        return await self.get_official_info(attraction_name, xhs_notes)

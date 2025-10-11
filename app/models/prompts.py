@@ -24,22 +24,20 @@ class XHSPrompts:
 任务：在小红书搜索"{attraction_name}"相关的旅游笔记
 
 具体步骤：
-1. 访问小红书网站 https://www.xiaohongshu.com
-2. 等待页面完全加载(3-5秒)
-3. 在搜索框中输入关键词："{attraction_name}"
-4. 点击搜索或按回车键
-5. 等待搜索结果加载完成
-6. 浏览搜索结果，找到前{max_notes}篇相关笔记
-7. 对于每篇笔记，提取以下信息：
+1. 访问小红书网站 https://www.xiaohongshu.com/search_result?keyword={attraction_name}攻略
+2. 浏览搜索结果，找到前{max_notes}篇相关笔记
+3. 对于每篇笔记，提取以下信息：
    - 笔记标题
    - 作者名称
    - 笔记正文内容（尽可能完整）
    - 点赞数、收藏数、评论数
+   - 评论
    - 笔记中的图片URL（前3张）
    - 提取笔记中提到的URL链接（特别是官网、预订、门票相关链接）
    - 识别关键词（如：官网、官方网站、预订、门票、开放时间等）
 
 重要提示：
+- 多尝试几个帖子，单一的帖子收集不到，就换几个帖子收集
 - 像真实用户一样操作，每步之间留有间隔
 - 优先选择点赞数和收藏数较高的笔记
 - 如果遇到登录要求，直接停留在登录页面等待（不要尝试跳过或关闭登录窗口，系统会自动检测并暂停等待人工登录）
@@ -55,15 +53,16 @@ class XHSPrompts:
 任务：在小红书搜索"{destination}旅游攻略"或"{destination}必去景点"，提取推荐景点列表
 
 具体步骤：
-1. 访问小红书网站 https://www.xiaohongshu.com/search_result?keyword={destination}旅游攻略 和 https://www.xiaohongshu.com/search_result?keyword={destination}必去景点
+1. 访问小红书网站 https://www.xiaohongshu.com/search_result?keyword={destination}旅游攻略
 2. 等待页面完全加载(3-5秒)
-3. 浏览前5-10篇高赞攻略笔记
-4. 从这些攻略笔记中提取：
+3. 点击浏览前5-10篇高赞攻略笔记
+4. 尽量多收集景点
+5. 从这些攻略笔记中提取：
    - 提到的景点名称
    - 推荐理由（为什么推荐这个景点）
    - 优先级（根据笔记中的描述判断，如"必去"=5，"推荐"=4，"可选"=3）
    - 额外信息（比如离哪些景点一起比较近）
-5. 提取最多{max_attractions}个景点
+6. 提取最多{max_attractions}个景点
 
 重要提示：
 - 多尝试几个帖子，单一的帖子收集不到，就换几个帖子收集

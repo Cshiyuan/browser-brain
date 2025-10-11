@@ -1,6 +1,6 @@
 """基于Browser-Use的AI驱动爬虫基类"""
 import asyncio
-from typing import Optional, List, Any
+from typing import Optional, Any, TypeVar, Callable, Dict, List, Literal
 from browser_use import Agent, BrowserSession, BrowserProfile, ChatGoogle
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -10,6 +10,9 @@ from app.models.prompts import SystemPrompts
 from config.settings import settings
 
 logger = setup_logger(__name__)
+
+# 泛型：批量爬取的返回结果类型
+T = TypeVar('T')
 
 
 class BrowserUseScraper:
@@ -23,26 +26,241 @@ class BrowserUseScraper:
     ):
         """
         初始化Browser-Use爬虫
-
         Args:
             headless: 是否无头模式
-            fast_mode: 是否启用快速模式（优化速度）
-            keep_alive: 是否保持浏览器会话（用于任务链式执行）
+            fast_mode: 是否启用快速模式
+            keep_alive: 是否保持浏览器会话
         """
         self.headless = headless if headless is not None else settings.HEADLESS
         self.fast_mode = fast_mode
         self.keep_alive = keep_alive
         self.llm = self._initialize_llm()
-        self.browser_session: Optional[BrowserSession] = None
 
-        logger.info(f"📍 STEP 3: 创建浏览器会话 | headless={self.headless}")
-        logger.info(f"   🌐 正在启动浏览器...")
-        self.browser_profile = self._create_browser_profile()
-        self.browser_session = BrowserSession(
-            browser_profile=self.browser_profile
+
+
+    def create_browser_profile(self, window_config: Optional[Dict] = None) -> BrowserProfile:
+        """
+        创建浏览器配置
+        Args:
+            window_config: 可选的窗口配置（window_size, viewport）
+        Returns:
+            BrowserProfile 对象
+        """
+        # 基础反检测参数
+        browser_args = [
+            '--disable-blink-features=AutomationControlled',  # 隐藏自动化标识
+            '--disable-dev-shm-usage',
+            '--disable-infobars',  # 隐藏自动化信息栏
+        ]
+
+        # 根据有头/无头模式添加不同参数
+        if self.headless:
+            # 无头模式：添加必要参数
+            browser_args.extend([
+                '--no-sandbox',
+                '--disable-gpu',
+                '--window-size=1920,1080',  # 设置窗口大小
+            ])
+        else:
+            # 有头模式：模拟真实用户行为
+            browser_args.extend([
+                '--start-maximized',  # 最大化窗口（真实用户行为）
+            ])
+            logger.info("有头模式: 最大化浏览器窗口")
+
+        # 真实的 User-Agent（Mac Chrome）
+        user_agent = (
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
         )
-        self.browser_session.start()
-        logger.info("   ✓ 浏览器会话创建成功")
+
+        # Fast Mode优化：减少等待时间以提升速度
+        if self.fast_mode:
+            wait_page_load = 0.1
+            wait_actions = 0.1
+            logger.info("🚀 Fast Mode已启用：最小化等待时间")
+        else:
+            wait_page_load = 2.0
+            wait_actions = 1.0
+            logger.info("🐢 标准模式：模拟真实用户行为")
+
+        BROWSER_PROFILE_STORAGE_PATH = "browser_profile_storage.json"
+
+        # 构建配置参数字典
+        profile_kwargs = {
+            "storage_state": BROWSER_PROFILE_STORAGE_PATH,
+            "keep_alive": self.keep_alive,
+            "headless": self.headless,
+            "dom_highlight_elements": True,
+            "disable_security": False,
+            "user_data_dir": None,
+            "args": browser_args,
+            "ignore_default_args": ['--enable-automation'],
+            "wait_for_network_idle_page_load_time": wait_page_load,
+            "wait_between_actions": wait_actions,
+        }
+
+        # 如果有窗口配置，合并到参数中
+        if window_config:
+            profile_kwargs.update(window_config)  # type: ignore
+
+        profile = BrowserProfile(**profile_kwargs)  # type: ignore
+
+        mode_desc = "Fast Mode（速度优化）" if self.fast_mode else "标准模式（反检测优化）"
+        logger.info(f"✓ 浏览器配置创建完成（{mode_desc}）")
+        return profile
+
+
+    def calculate_window_layout(
+        self,
+        index: int,
+        window_width: int = 400,
+        window_height: int = 600
+    ) -> Optional[Dict]:
+        """
+        计算窗口布局（有头模式）
+
+        Args:
+            index: 窗口索引
+            window_width: 窗口宽度
+            window_height: 窗口高度
+
+        Returns:
+            窗口配置字典，如果是无头模式则返回 None
+        """
+        if self.headless:
+            return None
+
+        try:
+            import screeninfo
+            screen = screeninfo.get_monitors()[0]
+            screen_width, screen_height = screen.width, screen.height
+        except Exception:
+            screen_width, screen_height = 1920, 1080
+
+        # 窗口布局参数
+        margin = 10
+        spacing = 15
+
+        # 计算每行可放置的窗口数
+        usable_width = screen_width - (2 * margin)
+        windows_per_row = max(1, usable_width // (window_width + spacing))
+
+        # 计算当前窗口的行列位置
+        row = index // windows_per_row
+        col = index % windows_per_row
+
+        # 计算窗口偏移量
+        x_offset = margin + col * (window_width + spacing)
+        y_offset = margin + row * (window_height + spacing)
+
+        # 边界检查：防止窗口超出屏幕
+        if x_offset + window_width > screen_width:
+            x_offset = screen_width - window_width - margin
+        if y_offset + window_height > screen_height:
+            y_offset = screen_height - window_height - margin
+
+        logger.debug(f"   窗口位置: x={x_offset}, y={y_offset}, size={window_width}x{window_height}")
+
+        return {
+            "window_size": {"width": window_width, "height": window_height},
+            "window_position": {"width": x_offset, "height": y_offset},  # ViewportSize 使用 width/height 表示 x/y
+            "viewport": {"width": window_width - 20, "height": window_height - 50}
+        }
+
+    async def scrape_batch(
+        self,
+        items: List[str],
+        scrape_task_fn: Callable[[str], str],
+        parse_result_fn: Callable[[Any], T],
+        output_model: type[BaseModel],
+        max_concurrent: int = 5,
+        max_steps: int = 30,
+        item_label: str = "item"
+    ) -> Dict[str, T]:
+        """
+        通用批量并发爬取方法
+
+        Args:
+            items: 待爬取项目列表（如景点名称列表）
+            scrape_task_fn: 生成任务提示词的函数 (item_name -> task_string)
+            parse_result_fn: 解析结果的函数 (raw_result -> parsed_result)
+            output_model: Pydantic 输出模型
+            max_concurrent: 最大并发数
+            max_steps: 每个任务的最大步骤数
+            item_label: 项目标签（用于日志）
+
+        Returns:
+            字典 {item_name: parsed_result}
+        """
+        logger.info("=" * 60)
+        logger.info(f"🚀 开始批量并发爬取")
+        logger.info(f"   {item_label}数量: {len(items)}")
+        logger.info(f"   最大并发数: {max_concurrent}")
+        logger.info("=" * 60)
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def scrape_single(index: int, item_name: str):
+            """为单个项目爬取（复用 scrape() 方法）"""
+            async with semaphore:
+                logger.info(f"📍 [{index + 1}/{len(items)}] 开始爬取: {item_name}")
+
+                # 计算窗口布局
+                window_config = self.calculate_window_layout(index)
+
+                # 生成任务
+                task = scrape_task_fn(item_name)
+
+                # 调用 scrape() 方法
+                result = await self.scrape(
+                    task=task,
+                    output_model=output_model,
+                    max_steps=max_steps,
+                    use_vision='auto',
+                    window_config=window_config
+                )
+
+                # 解析结果
+                if result["status"] == "success" and result.get("is_successful"):
+                    parsed_result = parse_result_fn(result["data"])
+                    logger.info(f"   ✅ [{index + 1}/{len(items)}] 成功: {item_name}")
+                    return item_name, parsed_result
+                else:
+                    logger.warning(f"   ❌ [{index + 1}/{len(items)}] 失败: {item_name}")
+                    return item_name, None
+
+        # 并发执行
+        tasks = [scrape_single(idx, name) for idx, name in enumerate(items)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 汇总结果
+        result_dict: Dict[str, T] = {}
+        success_count = 0
+        fail_count = 0
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"   任务异常: {result}")
+                fail_count += 1
+            elif isinstance(result, tuple) and len(result) == 2:
+                item_name, parsed_data = result
+                result_dict[item_name] = parsed_data
+                if parsed_data is not None:
+                    success_count += 1
+                else:
+                    fail_count += 1
+            else:
+                logger.error(f"   结果格式异常: {result}")
+                fail_count += 1
+
+        logger.info("=" * 60)
+        logger.info(f"✅ 批量爬取完成")
+        logger.info(f"   成功: {success_count}, 失败: {fail_count}, 总计: {len(items)}")
+        logger.info("=" * 60)
+
+        return result_dict
 
     @staticmethod
     def _initialize_llm():
@@ -84,69 +302,6 @@ class BrowserUseScraper:
             )
 
 
-    def _create_browser_profile(self) -> BrowserProfile:
-        """创建模拟真实用户的浏览器配置（增强反检测）"""
-        logger.info(f"📍 STEP 2: 创建浏览器配置 | headless={self.headless}")
-
-        # 基础反检测参数
-        browser_args = [
-            '--disable-blink-features=AutomationControlled',  # 隐藏自动化标识
-            '--disable-dev-shm-usage',
-            '--disable-infobars',  # 隐藏自动化信息栏
-        ]
-
-        # 根据有头/无头模式添加不同参数
-        if self.headless:
-            # 无头模式：添加必要参数
-            browser_args.extend([
-                '--no-sandbox',
-                '--disable-gpu',
-                '--window-size=1920,1080',  # 设置窗口大小
-            ])
-            logger.info("无头模式: 添加额外浏览器参数")
-        else:
-            # 有头模式：模拟真实用户行为
-            browser_args.extend([
-                '--start-maximized',  # 最大化窗口（真实用户行为）
-            ])
-            logger.info("有头模式: 最大化浏览器窗口")
-
-        logger.debug(f"浏览器参数: {browser_args}")
-
-        # 真实的 User-Agent（Mac Chrome）
-        user_agent = (
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
-        )
-
-        # Fast Mode优化：减少等待时间以提升速度
-        if self.fast_mode:
-            wait_page_load = 0.1
-            max_page_load = 5.0
-            wait_actions = 0.1
-            logger.info("🚀 Fast Mode已启用：最小化等待时间")
-        else:
-            wait_page_load = 2.0
-            max_page_load = 10.0
-            wait_actions = 1.0
-            logger.info("🐢 标准模式：模拟真实用户行为")
-
-        profile = BrowserProfile(
-            keep_alive=self.keep_alive,
-            headless=self.headless,
-            disable_security=False,  # 保持安全特性,更像真实浏览器
-            user_data_dir=None,
-            args=browser_args,
-            ignore_default_args=['--enable-automation'],  # 隐藏自动化标识
-            wait_for_network_idle_page_load_time=wait_page_load,  # Fast Mode: 0.1s, 标准: 2.0s
-           # maximum_wait_page_load_time=max_page_load,  # Fast Mode: 5.0s, 标准: 10.0s
-            wait_between_actions=wait_actions,  # Fast Mode: 0.1s, 标准: 1.0s
-        )
-
-        mode_desc = "Fast Mode（速度优化）" if self.fast_mode else "标准模式（反检测优化）"
-        logger.info(f"✓ 浏览器配置创建完成（{mode_desc}）")
-        return profile
 
     def _log_agent_steps(self, history):
         """详细记录 Agent 执行的每一步"""
@@ -207,12 +362,13 @@ class BrowserUseScraper:
 
         logger.info("=" * 60)
 
-    async def scrape_with_task(
+    async def scrape(
             self,
             task: str,
             output_model: Optional[type[BaseModel]] = None,
             max_steps: int = 20,
-            use_vision: bool = True
+            use_vision: bool | Literal['auto']  = 'auto',
+            window_config: Optional[Dict] = None
     ) -> dict:
         """
         使用Browser-Use Agent执行爬取任务
@@ -222,6 +378,7 @@ class BrowserUseScraper:
             output_model: Pydantic模型类，用于结构化输出
             max_steps: 最大步骤数
             use_vision: 是否使用视觉能力（截图理解）
+            window_config: 窗口配置（批量爬取时传入）
 
         Returns:
             爬取结果字典
@@ -232,14 +389,17 @@ class BrowserUseScraper:
             f"任务配置: max_steps={max_steps}, use_vision={use_vision}, output_model={output_model.__name__ if output_model else 'None'}")
         logger.debug(f"完整任务描述:\n{task}")
 
+        # 创建浏览器配置（支持传入窗口配置）
+        browser_profile = self.create_browser_profile(window_config)
+        browser_session = BrowserSession(browser_profile=browser_profile)
+
         try:
             logger.info("📍 STEP 5: 创建AI Agent")
-
             # Fast Mode优化：添加速度优化提示词和flash_mode
             agent_kwargs = {
                 "task": task,
                 "llm": self.llm,
-                "browser_session": self.browser_session,
+                "browser_session": browser_session,
                 "output_model_schema": output_model,
                 "use_vision": use_vision,
             }
@@ -314,160 +474,21 @@ class BrowserUseScraper:
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            # 关闭浏览器会话
+            try:
+                await browser_session.stop()
+                logger.debug("✓ 浏览器会话已关闭")
+            except Exception as e:
+                logger.warning(f"⚠️  关闭浏览器警告: {e}")
 
     async def close(self, force: bool = False):
         """
-        关闭浏览器会话（修复资源泄漏）
+        关闭浏览器会话 (已废弃，scrape() 方法会自动关闭浏览器)
 
+        保留此方法仅为向后兼容
         Args:
             force: 是否强制关闭（忽略keep_alive设置）
         """
-        # Keep-Alive模式：除非强制关闭，否则保持会话
-        if self.keep_alive and not force:
-            logger.info("🔗 Keep-Alive模式：保持浏览器会话，跳过关闭")
-            return
+        logger.debug("close() 方法已废弃，scrape() 方法会自动管理浏览器会话")
 
-        if self.browser_session:
-            logger.info("📍 STEP 7: 关闭浏览器会话")
-            try:
-                # Browser-Use 0.7.x 使用 stop() 方法而非 close()
-                if hasattr(self.browser_session, 'stop'):
-                    await self.browser_session.stop()
-                    logger.info("✓ 使用 stop() 方法关闭")
-                elif hasattr(self.browser_session, 'close'):
-                    await self.browser_session.close()
-                    logger.info("✓ 使用 close() 方法关闭")
-
-                # 等待资源释放（修复 aiohttp 连接泄漏）
-                await asyncio.sleep(0.1)
-
-                logger.info("✅ 浏览器会话已成功关闭")
-            except Exception as e:
-                # 降级为警告，不影响主流程
-                logger.warning(f"⚠️  关闭浏览器时出现警告: {e}")
-            finally:
-                self.browser_session = None
-                logger.debug("浏览器会话对象已清空")
-
-
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器退出"""
-        await self.close()
-
-
-
-    @staticmethod
-    async def run_parallel(
-            tasks: List[str],
-            output_model: Optional[type[BaseModel]] = None,
-            max_steps: int = 20,
-            headless: bool = True,
-            use_vision: bool = True,
-            fast_mode: bool = False
-    ) -> List[dict]:
-        """
-        并行执行多个独立任务（每个任务使用独立的浏览器实例）
-
-        Args:
-            tasks: 任务描述列表（自然语言）
-            output_model: Pydantic模型类（可选）
-            max_steps: 每个任务的最大步骤数
-            headless: 是否使用无头浏览器
-            use_vision: 是否启用视觉能力
-            fast_mode: 是否启用Fast Mode
-
-        Returns:
-            List[dict]: 结果列表，每个包含 {task_index, status, data/error}
-
-        注意：
-            - 每个任务使用独立的浏览器实例（避免状态冲突）
-            - 使用 asyncio.gather() 实现真正的并发执行
-            - 适用于完全独立的多个任务（如爬取多个网站）
-            - 资源消耗较高（N个任务 = N个浏览器进程）
-        """
-        logger.info(f"🚀 并行执行 {len(tasks)} 个任务...")
-
-        async def run_single_task(task_index: int, task: str):
-            """执行单个任务（创建独立浏览器实例）"""
-            scraper = None
-            try:
-                # 为每个任务创建独立的爬虫实例
-                scraper = BrowserUseScraper(
-                    headless=headless,
-                    fast_mode=fast_mode,
-                    keep_alive=False  # 并行模式不使用Keep-Alive
-                )
-
-                logger.info(f"📌 任务 {task_index}: 启动独立浏览器...")
-
-                # 执行任务
-                result = await scraper.scrape_with_task(
-                    task=task,
-                    output_model=output_model,
-                    max_steps=max_steps,
-                    use_vision=use_vision
-                )
-
-                logger.info(f"✅ 任务 {task_index}: 完成 (执行了 {result.get('steps', 0)} 步)")
-
-                return {
-                    "task_index": task_index,
-                    "task": task,
-                    "status": result["status"],
-                    "data": result.get("data"),
-                    "steps": result.get("steps", 0)
-                }
-
-            except Exception as e:
-                logger.error(f"❌ 任务 {task_index} 失败: {e}")
-                return {
-                    "task_index": task_index,
-                    "task": task,
-                    "status": "error",
-                    "error": str(e)
-                }
-
-            finally:
-                # 确保关闭浏览器
-                if scraper:
-                    await scraper.close(force=True)
-
-        # 使用 asyncio.gather() 并行执行所有任务
-        parallel_tasks = [
-            run_single_task(idx, task)
-            for idx, task in enumerate(tasks, 1)
-        ]
-
-        results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
-
-        # 处理异常结果
-        final_results: List[dict] = []
-        for idx, result in enumerate(results, 1):
-            if isinstance(result, Exception):
-                logger.error(f"❌ 任务 {idx} 异常: {result}")
-                final_results.append({
-                    "task_index": idx,
-                    "task": tasks[idx - 1],
-                    "status": "exception",
-                    "error": str(result)
-                })
-            elif isinstance(result, dict):
-                final_results.append(result)
-            else:
-                # 未预期的结果类型
-                logger.warning(f"⚠️  任务 {idx} 返回了未预期的类型: {type(result)}")
-                final_results.append({
-                    "task_index": idx,
-                    "task": tasks[idx - 1],
-                    "status": "error",
-                    "error": f"Unexpected result type: {type(result)}"
-                })
-
-        # 统计结果
-        success_count = sum(1 for r in final_results if r["status"] == "success")
-        logger.info(
-            f"🏁 并行任务完成: {success_count}/{len(tasks)} 个成功"
-        )
-
-        return final_results

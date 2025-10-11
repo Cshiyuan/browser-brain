@@ -30,7 +30,7 @@ async def run_xhs_scraper(attraction_name: str, max_notes: int = 5, headless: bo
 
     try:
         # 执行爬取
-        notes = await scraper.scrape(attraction_name, max_notes)
+        notes = await scraper.search_attraction(attraction_name, max_notes)
 
         # 格式化输出
         result = {

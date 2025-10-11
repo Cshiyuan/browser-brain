@@ -1,7 +1,9 @@
 """旅行规划Agent - 基于Browser-Use AI"""
 import asyncio
-from typing import List
+from typing import List, Any, Coroutine
 from datetime import datetime, timedelta
+
+from app.scrapers import DestinationGuide
 from app.scrapers.xhs_scraper import XHSScraper
 from app.scrapers.official_scraper import OfficialScraper
 from app.models.attraction import Attraction
@@ -33,11 +35,11 @@ class PlannerAgent:
         logger.info(message)
 
     async def plan_trip(
-        self,
-        departure: str,
-        destination: str,
-        days: int,
-        must_visit: List[str]
+            self,
+            departure: str,
+            destination: str,
+            days: int,
+            must_visit: List[str]
     ) -> str:
         """
         规划旅行（使用Browser-Use AI爬虫）
@@ -51,17 +53,25 @@ class PlannerAgent:
         Returns:
             旅行方案文本
         """
-        self._log("="*60)
+        self._log("=" * 60)
         self._log(f"🚀 开始AI驱动旅行规划")
         self._log(f"   出发地: {departure}")
         self._log(f"   目的地: {destination}")
         self._log(f"   天数: {days}天")
         self._log(f"   必去景点: {must_visit if must_visit else '无（自动规划）'}")
-        self._log("="*60)
+        self._log("=" * 60)
 
         try:
             # 步骤1: 使用AI收集景点信息
             self._log("📍 [步骤1/3] 开始收集景点信息...")
+
+            # 补充爬取景点
+            if not must_visit:
+                guide_data = await self._collect_destination_guid(destination)
+                for visit in guide_data.recommended_attractions:
+                    must_visit.append(visit.name)
+
+            # 根据景点，并发拉取数据
             await self._collect_attractions_with_ai(destination, must_visit)
             self._log(f"✅ [步骤1/3] 完成，收集到 {len(self.attractions)} 个景点")
 
@@ -79,151 +89,102 @@ class PlannerAgent:
             result = self._format_plan(trip_plan)
             self._log("✅ [步骤3/3] 格式化完成")
             self._log("🎉 旅行规划全部完成！")
-            self._log("="*60)
+            self._log("=" * 60)
             return result
 
         except Exception as e:
-            logger.error("="*60)
+            logger.error("=" * 60)
             logger.error(f"❌ AI规划失败: {e}", exc_info=True)
-            logger.error("="*60)
+            logger.error("=" * 60)
             raise
+
+
+    async def _collect_destination_guid(self, destination: str) -> DestinationGuide | None:
+        self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
+        # 创建临时爬虫实例用于搜索攻略
+        xhs_scraper = XHSScraper(
+            headless=self.headless,
+            keep_alive=True,
+            # fast_mode=True,
+        )
+        try:
+            guide_data = await xhs_scraper.search_destination_guide(
+                destination=destination,
+                max_attractions=5  # 默认提取5个推荐景点
+            )
+            if not guide_data.recommended_attractions:
+                self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
+                return None
+        finally:
+            await xhs_scraper.close(force=True)
+
+        self._log(f"   ✅ 成功从攻略中提取 {len(guide_data.recommended_attractions)} 个推荐景点: {guide_data.recommended_attractions}")
+        # 使用提取的景点作为必去景点
+        return guide_data
+
 
     async def _collect_attractions_with_ai(self, destination: str, must_visit: List[str]):
-        """
-        使用AI收集景点信息（Browser-Use）
+        """使用批量方法并发收集景点信息"""
 
-        Args:
-            destination: 目的地
-            must_visit: 必去景点
-        """
-        # 如果没有指定必去景点，从小红书攻略中提取推荐景点
-        if not must_visit:
-            self._log("   ℹ️  未指定必去景点，将从小红书攻略中搜集推荐景点...")
-            self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
-
-            # 创建临时爬虫实例用于搜索攻略
-            xhs_scraper = XHSScraper(
-                headless=self.headless,
-                keep_alive=True,
-                #fast_mode=True,
-            )
-            try:
-                recommended_attractions = await xhs_scraper.search_destination_guide(
-                    destination=destination,
-                    max_attractions=5  # 默认提取5个推荐景点
-                )
-
-                if not recommended_attractions:
-                    self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
-                    return
-
-                # 使用提取的景点作为必去景点
-                must_visit = recommended_attractions
-                self._log(f"   ✅ 成功从攻略中提取 {len(must_visit)} 个推荐景点: {must_visit}")
-
-            finally:
-                await xhs_scraper.close()
-
-        self._log(f"   🎯 目标景点: {must_visit}")
-        self._log(f"   🤖 启动AI爬虫...")
-
-        # 创建AI爬虫实例（共享浏览器）
+        # 步骤1: 批量爬取小红书数据
+        self._log(f"   📱 步骤1: 批量爬取小红书数据...")
         xhs_scraper = XHSScraper(headless=self.headless)
-        official_scraper = OfficialScraper(headless=self.headless)
 
         try:
-            # 为每个景点创建AI爬取任务
-            tasks = []
-            for idx, attraction_name in enumerate(must_visit, 1):
-                self._log(f"   📌 [{idx}/{len(must_visit)}] 准备爬取: {attraction_name}")
-                task = self._scrape_single_attraction_ai(
-                    destination,
-                    attraction_name,
-                    xhs_scraper,
-                    official_scraper
-                )
-                tasks.append(task)
-
-            # 并发执行AI爬取
-            self._log(f"   ⚡ 并发执行 {len(tasks)} 个爬取任务...")
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # 收集成功的结果
-            success_count = 0
-            fail_count = 0
-            for idx, result in enumerate(results, 1):
-                if isinstance(result, Attraction):
-                    self.attractions.append(result)
-                    success_count += 1
-                    self._log(f"   ✅ [{idx}/{len(results)}] 成功收集: {result.name} (评分: {result.recommendation_score:.1f})")
-                else:
-                    fail_count += 1
-                    self._log(f"   ❌ [{idx}/{len(results)}] 失败: {result}")
-
-            self._log(f"   📊 收集统计: 成功 {success_count} 个, 失败 {fail_count} 个")
-
+            xhs_results = await xhs_scraper.search_attractions_batch(
+                attractions=must_visit,
+                max_notes=settings.XHS_MAX_NOTES,
+                max_concurrent=3  # 最多3个并发
+            )
         finally:
-            # 关闭爬虫（释放浏览器）
-            self._log("   🔒 关闭AI爬虫...")
-            await xhs_scraper.close()
-            await official_scraper.close()
+            await xhs_scraper.close(force=True)
 
-    async def _scrape_single_attraction_ai(
-        self,
-        city: str,
-        attraction_name: str,
-        xhs_scraper: XHSScraper,
-        official_scraper: OfficialScraper
-    ) -> Attraction:
-        """
-        使用AI爬取单个景点的信息
+        self._log(f"   ✅ 小红书数据收集完成: {len(xhs_results)} 个景点")
 
-        Args:
-            city: 城市
-            attraction_name: 景点名称
-            xhs_scraper: 小红书AI爬虫
-            official_scraper: 官网AI爬虫
+        # 步骤2: 逐个爬取官网数据（保持现有逻辑）
+        self._log(f"   🌐 步骤2: 爬取官网数据...")
+        success_count = 0
+        fail_count = 0
 
-        Returns:
-            景点对象
-        """
-        logger.info(f"AI开始爬取景点: {attraction_name}")
+        for idx, attraction_name in enumerate(must_visit, 1):
+            try:
+                self._log(f"   📍 [{idx}/{len(must_visit)}] 爬取官网: {attraction_name}")
 
-        try:
-            # AI爬取小红书笔记
-            xhs_notes = await xhs_scraper.scrape(
-                attraction_name,
-                max_notes=settings.XHS_MAX_NOTES
-            )
+                # 获取小红书笔记
+                xhs_notes = xhs_results.get(attraction_name, [])
 
-            # AI爬取官网信息
-            official_info = await official_scraper.scrape(attraction_name, xhs_notes)
+                # 爬取官网信息
+                official_scraper = OfficialScraper(headless=self.headless)
+                try:
+                    official_info = await official_scraper.get_official_info(attraction_name, xhs_notes)
+                finally:
+                    await official_scraper.close(force=True)
 
-            # 构建景点对象
-            attraction = Attraction(
-                name=attraction_name,
-                city=city
-            )
+                # 构建景点对象
+                attraction = Attraction(name=attraction_name, city=destination)
 
-            # 添加小红书数据
-            attraction.add_raw_data("xiaohongshu", {
-                "notes": [note.dict() for note in xhs_notes],
-                "total_notes": len(xhs_notes)
-            })
+                # 添加小红书数据
+                attraction.add_raw_data("xiaohongshu", {
+                    "notes": [note.dict() for note in xhs_notes],
+                    "total_notes": len(xhs_notes)
+                })
 
-            # 添加官网信息
-            if official_info:
-                attraction.add_raw_data("official", official_info.dict() if hasattr(official_info, 'dict') else official_info)
+                # 添加官网信息
+                if official_info:
+                    attraction.add_raw_data("official", official_info.dict() if hasattr(official_info, 'dict') else official_info)
 
-            # 计算推荐分数
-            attraction.recommendation_score = self._calculate_recommendation_score(attraction)
+                # 计算推荐分数
+                attraction.recommendation_score = self._calculate_recommendation_score(attraction)
 
-            logger.info(f"AI成功爬取景点: {attraction_name}, 推荐分数: {attraction.recommendation_score:.1f}")
-            return attraction
+                self.attractions.append(attraction)
+                success_count += 1
+                self._log(f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name} (评分: {attraction.recommendation_score:.1f})")
 
-        except Exception as e:
-            logger.error(f"AI爬取景点失败 {attraction_name}: {e}", exc_info=True)
-            raise
+            except Exception as e:
+                fail_count += 1
+                self._log(f"   ❌ [{idx}/{len(must_visit)}] 失败: {attraction_name} - {e}")
+
+        self._log(f"   📊 收集统计: 成功 {success_count} 个, 失败 {fail_count} 个")
 
     def _calculate_recommendation_score(self, attraction: Attraction) -> float:
         """计算景点推荐分数"""
@@ -250,10 +211,10 @@ class PlannerAgent:
         return min(score, 100)
 
     async def _generate_trip_plan(
-        self,
-        departure: str,
-        destination: str,
-        days: int
+            self,
+            departure: str,
+            destination: str,
+            days: int
     ) -> TripPlan:
         """
         生成旅行方案
@@ -302,8 +263,8 @@ class PlannerAgent:
                 day=day,
                 date=str(start_date + timedelta(days=day - 1)),
                 title=f"第{day}天行程",
-                morning=f"游览: {', '.join(attraction_names[:len(attraction_names)//2]) if attraction_names else '自由活动'}",
-                afternoon=f"游览: {', '.join(attraction_names[len(attraction_names)//2:]) if len(attraction_names) > 1 else '休息'}",
+                morning=f"游览: {', '.join(attraction_names[:len(attraction_names) // 2]) if attraction_names else '自由活动'}",
+                afternoon=f"游览: {', '.join(attraction_names[len(attraction_names) // 2:]) if len(attraction_names) > 1 else '休息'}",
                 evening="品尝当地美食",
                 meals=["早餐：酒店", "午餐：景区附近", "晚餐：特色美食"],
                 accommodation="当地酒店",
@@ -417,10 +378,10 @@ class PlannerAgent:
         """格式化输出方案"""
         output = []
 
-        output.append(f"\n{'='*60}")
+        output.append(f"\n{'=' * 60}")
         output.append(f"  {plan.title}")
         output.append(f"  🤖 Powered by Browser-Use AI")
-        output.append(f"{'='*60}\n")
+        output.append(f"{'=' * 60}\n")
 
         # 从 context 中获取行程数据
         itinerary_data = plan.get("ai_planning.itinerary", {})
@@ -470,6 +431,6 @@ class PlannerAgent:
             for tip in tips:
                 output.append(f"  • {tip}")
 
-        output.append(f"\n{'='*60}\n")
+        output.append(f"\n{'=' * 60}\n")
 
         return "\n".join(output)

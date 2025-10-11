@@ -48,7 +48,7 @@ async def run_official_scraper(attraction_name: str, xhs_links: list = None, hea
             ]
 
         # 执行爬取
-        official_info = await scraper.scrape(attraction_name, mock_notes)
+        official_info = await scraper.get_official_info(attraction_name, mock_notes)
 
         # 格式化输出
         if official_info:
