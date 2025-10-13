@@ -23,7 +23,7 @@ class Settings:
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "google")  # google, openai, or anthropic
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.0-flash-exp")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 
     # 浏览器配置
     HEADLESS: bool = os.getenv("HEADLESS", "false").lower() == "true"  # 默认显示浏览器

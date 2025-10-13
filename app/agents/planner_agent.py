@@ -98,30 +98,26 @@ class PlannerAgent:
             logger.error("=" * 60)
             raise
 
-
     async def _collect_destination_guid(self, destination: str) -> DestinationGuide | None:
         self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
         # 创建临时爬虫实例用于搜索攻略
         xhs_scraper = XHSScraper(
             headless=self.headless,
             keep_alive=True,
-            # fast_mode=True,
         )
-        try:
-            guide_data = await xhs_scraper.search_destination_guide(
-                destination=destination,
-                max_attractions=5  # 默认提取5个推荐景点
-            )
-            if not guide_data.recommended_attractions:
-                self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
-                return None
-        finally:
-            await xhs_scraper.close(force=True)
 
-        self._log(f"   ✅ 成功从攻略中提取 {len(guide_data.recommended_attractions)} 个推荐景点: {guide_data.recommended_attractions}")
+        guide_data = await xhs_scraper.search_destination_guide(
+            destination=destination,
+            max_attractions=5  # 默认提取5个推荐景点
+        )
+        if not guide_data.recommended_attractions:
+            self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
+            return None
+
+        self._log(
+            f"   ✅ 成功从攻略中提取 {len(guide_data.recommended_attractions)} 个推荐景点: {guide_data.recommended_attractions}")
         # 使用提取的景点作为必去景点
         return guide_data
-
 
     async def _collect_attractions_with_ai(self, destination: str, must_visit: List[str]):
         """使用批量方法并发收集景点信息"""
@@ -130,14 +126,11 @@ class PlannerAgent:
         self._log(f"   📱 步骤1: 批量爬取小红书数据...")
         xhs_scraper = XHSScraper(headless=self.headless)
 
-        try:
-            xhs_results = await xhs_scraper.search_attractions_batch(
-                attractions=must_visit,
-                max_notes=settings.XHS_MAX_NOTES,
-                max_concurrent=3  # 最多3个并发
-            )
-        finally:
-            await xhs_scraper.close(force=True)
+        xhs_results = await xhs_scraper.search_attractions_batch(
+            attractions=must_visit,
+            max_notes=settings.XHS_MAX_NOTES,
+            max_concurrent=3  # 最多3个并发
+        )
 
         self._log(f"   ✅ 小红书数据收集完成: {len(xhs_results)} 个景点")
 
@@ -155,10 +148,7 @@ class PlannerAgent:
 
                 # 爬取官网信息
                 official_scraper = OfficialScraper(headless=self.headless)
-                try:
-                    official_info = await official_scraper.get_official_info(attraction_name, xhs_notes)
-                finally:
-                    await official_scraper.close(force=True)
+                official_info = await official_scraper.get_official_info(attraction_name, xhs_notes)
 
                 # 构建景点对象
                 attraction = Attraction(name=attraction_name, city=destination)
@@ -171,14 +161,16 @@ class PlannerAgent:
 
                 # 添加官网信息
                 if official_info:
-                    attraction.add_raw_data("official", official_info.dict() if hasattr(official_info, 'dict') else official_info)
+                    attraction.add_raw_data("official",
+                                            official_info.dict() if hasattr(official_info, 'dict') else official_info)
 
                 # 计算推荐分数
                 attraction.recommendation_score = self._calculate_recommendation_score(attraction)
 
                 self.attractions.append(attraction)
                 success_count += 1
-                self._log(f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name} (评分: {attraction.recommendation_score:.1f})")
+                self._log(
+                    f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name} (评分: {attraction.recommendation_score:.1f})")
 
             except Exception as e:
                 fail_count += 1

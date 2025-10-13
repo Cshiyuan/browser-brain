@@ -76,7 +76,7 @@ playwright install chromium
 # 🎯 推荐：使用Google Gemini（快速+免费额度）
 GOOGLE_API_KEY=your-google-api-key-here
 LLM_PROVIDER=google
-LLM_MODEL=gemini-2.0-flash-exp
+LLM_MODEL=gemini-2.5-flash
 
 # 浏览器配置
 HEADLESS=false  # 显示浏览器窗口，方便观察AI操作
@@ -255,9 +255,7 @@ BROWSER_USE_API_KEY=your-key
 │   ├── scrapers/            # AI爬虫层
 │   │   ├── browser_use_scraper.py # AI爬虫基类
 │   │   ├── xhs_scraper.py         # 小红书AI爬虫
-│   │   ├── official_scraper.py    # 官网AI爬虫
-│   │   ├── run_xhs.py            # 小红书独立运行脚本
-│   │   └── run_official.py       # 官网独立运行脚本
+│   │   └── official_scraper.py    # 官网AI爬虫
 │   ├── models/              # 数据模型
 │   │   ├── attraction.py         # 景点模型
 │   │   └── trip_plan.py         # 旅行方案模型
@@ -310,9 +308,7 @@ BROWSER_USE_API_KEY=your-key
 
 ```bash
 # Web界面：在侧边栏取消勾选"无头模式"
-
-# 独立运行爬虫（显示浏览器）
-bash run_xhs_scraper.sh "北京故宫" -n 3
+# 浏览器窗口会显示，可以观察AI的操作过程
 ```
 
 ### 查看日志
@@ -323,17 +319,7 @@ export LOG_LEVEL=DEBUG
 bash run_web.sh
 
 # 查看日志文件
-tail -f logs/scrapers/xhs_scraper_$(date +%Y%m%d).log
-```
-
-### 测试独立收集器
-
-```bash
-# 测试小红书爬虫
-bash run_xhs_scraper.sh "北京故宫" -n 3
-
-# 测试官网爬虫
-bash run_official_scraper.sh "北京故宫" -l "https://www.dpm.org.cn"
+tail -f logs/scrapers_xhs_scraper_$(date +%Y%m%d).log
 ```
 
 ## 🙏 致谢

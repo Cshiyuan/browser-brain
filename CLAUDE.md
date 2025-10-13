@@ -12,28 +12,24 @@ Browser-Brain 是一个使用 AI 驱动的旅行规划应用，通过自然语�
 - 📊 灵活的上下文数据模型设计
 - 🔄 异步并发爬取
 - 🎨 支持多种 LLM（OpenAI/Claude/Gemini）
-- 🚀 独立收集器模式（可单独运行）
 - 🛡️ 增强反检测配置（隐藏自动化标识、真实 User-Agent）
 - 🔐 验证码人工处理机制（自动检测并暂停等待）
 - ⚡ Fast Mode 速度优化（可选）
-- 🔗 Chain Agent Tasks（任务链式执行，保持浏览器会话）
+- 🪟 智能窗口布局（多窗口并发时自动平铺）
 
 
 ### 启动应用
 
 ```bash
-# 方式一：Web 界面（推荐）
+# Web 界面（推荐）
 ./run_web.sh
-
-# 方式二：独立收集器（默认有头模式）
-./run_xhs_scraper.sh "北京故宫" -n 5
-./run_official_scraper.sh "北京故宫" -l "https://www.dpm.org.cn"
 ```
 
 **⚠️ 重要提示**：
 - 默认使用有头浏览器模式（显示浏览器窗口）
 - 便于观察 AI 操作过程和发现反爬虫问题
 - 在 `.env` 文件中配置：`HEADLESS=false`
+- 所有爬虫通过 Web 界面或 PlannerAgent 调用,无需独立运行
 
 ### 代码检查
 
@@ -96,9 +92,7 @@ browser-brain/
 │   │   ├── models.py              # 爬虫数据模型（AI 返回结构）
 │   │   ├── browser_use_scraper.py # AI 爬虫基类
 │   │   ├── xhs_scraper.py         # 小红书爬虫
-│   │   ├── official_scraper.py    # 官网爬虫
-│   │   ├── run_xhs.py             # 小红书独立运行脚本
-│   │   └── run_official.py        # 官网独立运行脚本
+│   │   └── official_scraper.py    # 官网爬虫
 │   ├── models/
 │   │   ├── prompts.py             # AI 提示词统一管理
 │   │   ├── attraction.py          # 景点数据模型（业务模型）
@@ -137,21 +131,7 @@ Streamlit 单体架构：前后端运行在同一进程，通过直接函数调�
 
 ## 🔑 关键设计模式
 
-### 1. 独立收集器模式
-
-每个收集器可以独立运行，支持命令行参数和 JSON 输出。
-
-**小红书收集器**：
-```bash
-./run_xhs_scraper.sh "北京故宫" -n 5
-```
-
-**官网收集器**：
-```bash
-./run_official_scraper.sh "北京故宫" -l "https://www.dpm.org.cn"
-```
-
-### 2. 上下文数据模型
+### 1. 上下文数据模型
 
 `TripPlan` 和 `Attraction` 使用灵活的上下文字典而非固定属性。
 
@@ -164,7 +144,7 @@ highlights = plan.get("ai_planning.highlights", [])
 plan.daily_itineraries  # AttributeError!
 ```
 
-### 3. 爬虫数据模型统一管理
+### 2. 爬虫数据模型统一管理
 
 所有爬虫使用的 Pydantic 模型统一定义在 `app/scrapers/models.py` 中。
 
@@ -181,7 +161,7 @@ app/models/ (业务数据模型)
   - TripPlan
 ```
 
-### 4. AI 提示词统一管理
+### 3. AI 提示词统一管理
 
 所有 AI 任务提示词统一定义在 `app/models/prompts.py` 中。
 
@@ -217,7 +197,7 @@ class OfficialPrompts:
         return "..."
 ```
 
-### 5. Browser-Use AI 集成
+### 4. Browser-Use AI 集成
 
 所有爬虫继承自 `BrowserUseScraper` 基类：
 
@@ -247,7 +227,7 @@ async def scrape_with_task(
 ) -> dict
 ```
 
-### 6. Pydantic 数据验证
+### 5. Pydantic 数据验证
 
 所有模型字段必须类型匹配：
 
@@ -267,7 +247,7 @@ DailyItinerary(
 )
 ```
 
-### 7. 异步并发
+### 6. 异步并发
 
 使用 `asyncio.gather()` 实现并发爬取：
 
@@ -287,7 +267,7 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 ```bash
 # LLM 配置
 LLM_PROVIDER=google             # openai/anthropic/google
-LLM_MODEL=gemini-2.0-flash-exp
+LLM_MODEL=gemini-2.5-flash
 GOOGLE_API_KEY=AIza...
 
 # 爬虫配置
@@ -414,7 +394,6 @@ KISS 原则强调：
 - ❌ "为了测试覆盖率"而创建测试
 
 **替代方案**：
-- 使用独立收集器脚本手动测试
 - 通过 Web 界面验证功能
 - 依赖 Pylint 和 Mypy 做静态检查
 
@@ -495,14 +474,6 @@ scraper = XHSScraper(
 - ❌ 耦合度高，难以独立扩展
 - ❌ 单点故障
 
-### 为什么设计独立收集器？
-
-**动机**:
-- 便于调试和测试
-- 支持命令行批量处理
-- 可以集成到其他系统
-- 解耦数据收集和业务逻辑
-
 ---
 
 ## 📚 相关资源
@@ -527,3 +498,4 @@ scraper = XHSScraper(
 **最后更新**: 2025-10-12
 **维护者**: Browser-Brain Team
 **版本**: v1.6.0
+- 将欧卡姆剃刀定律作为修改代码的准则

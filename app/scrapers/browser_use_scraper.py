@@ -68,13 +68,6 @@ class BrowserUseScraper:
             ])
             logger.info("有头模式: 最大化浏览器窗口")
 
-        # 真实的 User-Agent（Mac Chrome）
-        user_agent = (
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/120.0.0.0 Safari/537.36'
-        )
-
         # Fast Mode优化：减少等待时间以提升速度
         if self.fast_mode:
             wait_page_load = 0.1
@@ -98,7 +91,7 @@ class BrowserUseScraper:
             "args": browser_args,
             "ignore_default_args": ['--enable-automation'],
             "wait_for_network_idle_page_load_time": wait_page_load,
-            "wait_between_actions": wait_actions,
+            "wait_between_actions": wait_actions
         }
 
         # 如果有窗口配置，合并到参数中
@@ -115,16 +108,14 @@ class BrowserUseScraper:
     def calculate_window_layout(
         self,
         index: int,
-        window_width: int = 400,
-        window_height: int = 600
+        total_windows: int
     ) -> Optional[Dict]:
         """
-        计算窗口布局（有头模式）
+        根据窗口总数智能计算窗口布局（有头模式）
 
         Args:
-            index: 窗口索引
-            window_width: 窗口宽度
-            window_height: 窗口高度
+            index: 当前窗口索引（从0开始）
+            total_windows: 同时启动的窗口总数
 
         Returns:
             窗口配置字典，如果是无头模式则返回 None
@@ -139,34 +130,49 @@ class BrowserUseScraper:
         except Exception:
             screen_width, screen_height = 1920, 1080
 
-        # 窗口布局参数
+        # 布局参数
         margin = 10
-        spacing = 15
+        spacing = 10
 
-        # 计算每行可放置的窗口数
-        usable_width = screen_width - (2 * margin)
-        windows_per_row = max(1, usable_width // (window_width + spacing))
+        # 根据窗口总数智能计算布局
+        import math
+
+        # 优先横向排列，计算最优行列数
+        cols = math.ceil(math.sqrt(total_windows * screen_width / screen_height))
+        rows = math.ceil(total_windows / cols)
+
+        # 计算窗口尺寸（自适应屏幕）
+        window_width = (screen_width - 2 * margin - (cols - 1) * spacing) // cols
+        window_height = (screen_height - 2 * margin - (rows - 1) * spacing) // rows
+
+        # 最小尺寸限制（确保窗口可用）
+        window_width = max(300, window_width)
+        window_height = max(400, window_height)
 
         # 计算当前窗口的行列位置
-        row = index // windows_per_row
-        col = index % windows_per_row
+        row = index // cols
+        col = index % cols
 
         # 计算窗口偏移量
         x_offset = margin + col * (window_width + spacing)
         y_offset = margin + row * (window_height + spacing)
 
-        # 边界检查：防止窗口超出屏幕
-        if x_offset + window_width > screen_width:
-            x_offset = screen_width - window_width - margin
-        if y_offset + window_height > screen_height:
-            y_offset = screen_height - window_height - margin
+        # 边界检查
+        x_offset = min(x_offset, screen_width - window_width - margin)
+        y_offset = min(y_offset, screen_height - window_height - margin)
 
-        logger.debug(f"   窗口位置: x={x_offset}, y={y_offset}, size={window_width}x{window_height}")
+        logger.debug(
+            f"   窗口布局 [{index + 1}/{total_windows}]: "
+            f"位置=({x_offset}, {y_offset}), "
+            f"尺寸={window_width}x{window_height}, "
+            f"网格={rows}行x{cols}列"
+        )
 
+        # 注意: window_position 虽然使用 ViewportSize 类型,但 width/height 字段实际代表 x/y 坐标
+        # viewport 参数在有头模式下不需要设置(默认 no_viewport=True,内容自适应窗口)
         return {
             "window_size": {"width": window_width, "height": window_height},
-            "window_position": {"width": x_offset, "height": y_offset},  # ViewportSize 使用 width/height 表示 x/y
-            "viewport": {"width": window_width - 20, "height": window_height - 50}
+            "window_position": {"width": x_offset, "height": y_offset},  # width=x, height=y
         }
 
     async def scrape_batch(
@@ -207,8 +213,8 @@ class BrowserUseScraper:
             async with semaphore:
                 logger.info(f"📍 [{index + 1}/{len(items)}] 开始爬取: {item_name}")
 
-                # 计算窗口布局
-                window_config = self.calculate_window_layout(index)
+                # 计算窗口布局（传入窗口总数）
+                window_config = self.calculate_window_layout(index, total_windows=len(items))
 
                 # 生成任务
                 task = scrape_task_fn(item_name)
@@ -482,13 +488,5 @@ class BrowserUseScraper:
             except Exception as e:
                 logger.warning(f"⚠️  关闭浏览器警告: {e}")
 
-    async def close(self, force: bool = False):
-        """
-        关闭浏览器会话 (已废弃，scrape() 方法会自动关闭浏览器)
 
-        保留此方法仅为向后兼容
-        Args:
-            force: 是否强制关闭（忽略keep_alive设置）
-        """
-        logger.debug("close() 方法已废弃，scrape() 方法会自动管理浏览器会话")
 
