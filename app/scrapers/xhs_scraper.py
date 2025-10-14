@@ -4,8 +4,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from app.scrapers.browser_use_scraper import BrowserUseScraper
-from app.scrapers.models import XHSNotesCollection, DestinationGuide
-from app.models.attraction import XHSNote
+from app.scrapers.models import XHSInformationCollection, XHSAttractionInformation, DestinationGuide
 from app.models.prompts import XHSPrompts
 from app.utils.logger import setup_logger
 
@@ -15,16 +14,16 @@ logger = setup_logger(__name__)
 class XHSScraper(BrowserUseScraper):
     """基于Browser-Use的小红书AI爬虫"""
 
-    async def search_attraction(self, attraction_name: str, max_notes: int = 5) -> List[XHSNote]:
+    async def search_attraction(self, attraction_name: str, max_notes: int = 5) -> List[XHSAttractionInformation]:
         """
-        使用AI搜索景点相关笔记
+        使用AI搜索景点相关知识点
 
         Args:
             attraction_name: 景点名称
             max_notes: 最大笔记数量
 
         Returns:
-            小红书笔记列表
+            景点知识点列表
         """
         logger.info(f"========== 开始小红书爬取 ==========")
         logger.info(f"目标景点: {attraction_name}, 目标笔记数: {max_notes}")
@@ -39,7 +38,7 @@ class XHSScraper(BrowserUseScraper):
             logger.info(f"📍 STEP 2: 调用Browser-Use AI执行小红书爬取（尝试 {attempt + 1}/{max_retries}）")
             result = await self.scrape(
                 task=task,
-                output_model=XHSNotesCollection,
+                output_model=XHSInformationCollection,
                 max_steps=30
             )
 
@@ -68,36 +67,24 @@ class XHSScraper(BrowserUseScraper):
             logger.error(f"执行步骤数: {result.get('steps', 0)}, 访问的URL: {result.get('urls', [])}")
             return []
 
-        # 转换为XHSNote对象
-        notes_data = result["data"]
-        xhs_notes = []
+        # 处理返回的知识点数据
+        info_data = result["data"]
 
         # 处理 AI Agent 失败返回字符串的情况
-        if isinstance(notes_data, str):
-            logger.warning(f"⚠️  AI返回数据格式异常: {type(notes_data)}")
-            logger.debug(f"原始返回数据: {notes_data}")
+        if isinstance(info_data, str):
+            logger.warning(f"⚠️  AI返回数据格式异常: {type(info_data)}")
+            logger.debug(f"原始返回数据: {info_data}")
             return []
 
-        logger.info(f"AI成功返回 {len(notes_data.notes)} 篇笔记数据")
-        logger.info(f"📍 STEP 4: 转换笔记数据为XHSNote对象 | note_count={len(notes_data.notes)}")
+        logger.info(f"AI成功返回 {len(info_data.information)} 条知识点")
+        logger.info(f"📍 STEP 4: 处理景点知识点数据 | info_count={len(info_data.information)}")
 
-        for idx, note_output in enumerate(notes_data.notes):
-            note = XHSNote(
-                title=note_output.title,
-                author=note_output.author,
-                content=note_output.content,
-                likes=note_output.likes,
-                collects=note_output.collects,
-                comments=note_output.comments,
-                images=note_output.images[:5],  # 最多5张图片
-                created_at=datetime.now().isoformat()  # 转换为ISO格式字符串
-            )
-            xhs_notes.append(note)
-            logger.debug(f"笔记 {idx + 1}: {note.title[:30]}... (点赞:{note.likes}, 收藏:{note.collects})")
+        for idx, info in enumerate(info_data.information):
+            logger.debug(f"知识点 {idx + 1}: {info.attraction_name} - {info.attraction_information[:50]}... (热度:{info.popularity_score})")
 
-        logger.info(f"✅ 成功爬取 {len(xhs_notes)} 篇小红书笔记")
+        logger.info(f"✅ 成功爬取 {len(info_data.information)} 条景点知识点")
         logger.info(f"========== 小红书爬取完成 ==========")
-        return xhs_notes
+        return info_data.information
 
     async def search_destination_guide(self, destination: str, max_attractions: int = 5) -> DestinationGuide:
         """
@@ -168,9 +155,9 @@ class XHSScraper(BrowserUseScraper):
         attractions: List[str],
         max_notes: int = 5,
         max_concurrent: int = 5
-    ) -> Dict[str, List[XHSNote]]:
+    ) -> Dict[str, List[XHSAttractionInformation]]:
         """
-        批量并发爬取多个景点的小红书笔记
+        批量并发爬取多个景点的知识点
 
         Args:
             attractions: 景点名称列表
@@ -178,35 +165,23 @@ class XHSScraper(BrowserUseScraper):
             max_concurrent: 最大并发数（默认5）
 
         Returns:
-            字典 {景点名: [笔记列表]}
+            字典 {景点名: [知识点列表]}
         """
 
         def create_task(attraction_name: str) -> str:
             """生成任务提示词"""
             return XHSPrompts.search_attraction_task(attraction_name, max_notes)
 
-        def parse_notes(notes_data: XHSNotesCollection) -> List[XHSNote]:
-            """解析笔记数据"""
-            return [
-                XHSNote(
-                    title=note.title,
-                    author=note.author,
-                    content=note.content,
-                    likes=note.likes,
-                    collects=note.collects,
-                    comments=note.comments,
-                    images=note.images[:5],
-                    created_at=datetime.now().isoformat()
-                )
-                for note in notes_data.notes
-            ]
+        def parse_information(info_data: XHSInformationCollection) -> List[XHSAttractionInformation]:
+            """解析知识点数据"""
+            return info_data.information
 
         # 调用基类的批量爬取方法
         return await self.scrape_batch(
             items=attractions,
             scrape_task_fn=create_task,
-            parse_result_fn=parse_notes,
-            output_model=XHSNotesCollection,
+            parse_result_fn=parse_information,
+            output_model=XHSInformationCollection,
             max_concurrent=max_concurrent,
             max_steps=30,
             item_label="景点"

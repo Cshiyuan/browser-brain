@@ -4,41 +4,38 @@
 - 小红书相关模型（XHSNoteOutput, XHSNotesCollection, AttractionRecommendation, DestinationGuide）
 - 官网相关模型（OfficialInfoOutput）
 """
-from typing import List
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
+class XHSAttractionInformation(BaseModel):
+    """从小红书笔记中提取的景点知识点"""
+    attraction_name: str = Field(default="", description="景点")
+    attraction_information: str = Field(
+        default="",
+        description="景点有用信息（纯文本格式，清晰简洁地收集有用的旅游攻略信息）"
+    )
+    popularity_score: int = Field(default=0, description="热度分数（根据点赞、收藏计算）")
+
 
 
 # ==================== 小红书相关模型 ====================
 
-class XHSNoteOutput(BaseModel):
-    """单条小红书笔记输出（Browser-Use AI 返回的数据结构）"""
-    title: str = Field(description="笔记标题")
-    author: str = Field(description="作者名称")
-    content: str = Field(description="笔记正文内容")
-    likes: int = Field(default=0, description="点赞数")
-    collects: int = Field(default=0, description="收藏数")
-    comments: int = Field(default=0, description="评论数")
-    extracted_links: List[str] = Field(default_factory=list, description="提取的URL链接（官网、预订链接等）")
-    keywords: List[str] = Field(default_factory=list, description="关键词（官网、预订、门票等）")
-    images: List[str] = Field(default_factory=list, description="图片URL列表")
 
-
-class XHSNotesCollection(BaseModel):
+class XHSInformationCollection(BaseModel):
     """小红书笔记集合（Browser-Use AI 返回的数据结构）"""
-    notes: List[XHSNoteOutput] = Field(description="笔记列表")
+    information: List[XHSAttractionInformation] = Field(description="信息列表")
 
 
-class AttractionRecommendation(BaseModel):
+class XHSAttractionRecommendation(BaseModel):
     """景点推荐（用于目的地攻略）"""
     name: str = Field(description="景点名称")
     reason: str = Field(default="", description="推荐理由")
     priority: int = Field(default=1, description="优先级（1-5，5最高）")
-    recommended_extra_info: str = Field(description="景点的额外信息")
+    recommended_extra_info: str = Field(default="", description="景点的额外信息")
 
 
 class DestinationGuide(BaseModel):
     """目的地旅游攻略（Browser-Use AI 返回的数据结构）"""
-    recommended_attractions: List[AttractionRecommendation] = Field(description="推荐景点列表")
+    recommended_attractions: List[XHSAttractionRecommendation] = Field(description="推荐景点列表")
     status: str = Field(description="执行状态（success/captcha/login）")
     msg: str = Field(description="执行信息描述")
 

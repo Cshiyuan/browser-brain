@@ -2,8 +2,8 @@
 from typing import List, Optional
 
 from app.scrapers.browser_use_scraper import BrowserUseScraper
-from app.scrapers.models import OfficialInfoOutput
-from app.models.attraction import OfficialInfo, XHSNote
+from app.scrapers.models import OfficialInfoOutput, XHSAttractionInformation
+from app.models.attraction import OfficialInfo
 from app.models.prompts import OfficialPrompts
 from app.utils.logger import setup_logger
 
@@ -16,38 +16,29 @@ class OfficialScraper(BrowserUseScraper):
     async def get_official_info(
         self,
         attraction_name: str,
-        xhs_notes: List[XHSNote]
+        xhs_information: List[XHSAttractionInformation]
     ) -> Optional[OfficialInfo]:
         """
         使用AI获取景点官方信息
 
         策略：
-        1. 优先从小红书笔记中提取的链接
-        2. 如果没有,使用搜索引擎查找
-        3. AI自动访问官网并提取信息
+        1. 使用搜索引擎查找官网
+        2. AI自动访问官网并提取信息
 
         Args:
             attraction_name: 景点名称
-            xhs_notes: 小红书笔记列表
+            xhs_information: 小红书知识点列表（暂时未使用）
 
         Returns:
             官方信息对象
         """
         logger.info(f"========== 开始官网信息爬取 ==========")
-        logger.info(f"目标景点: {attraction_name}, 参考笔记数: {len(xhs_notes)}")
+        logger.info(f"目标景点: {attraction_name}, 参考知识点数: {len(xhs_information)}")
         logger.info(f"📍 STEP 1: 准备官网信息爬取任务 | attraction={attraction_name}")
 
-        # 从小红书笔记中收集所有链接
-        collected_links = []
-        for note in xhs_notes:
-            # 如果有 url 字段,添加到链接列表
-            if note.url:
-                collected_links.append(note.url)
-
-        # 去重
-        collected_links = list(set(collected_links))
-        logger.info(f"从小红书笔记中收集到 {len(collected_links)} 个链接")
-        logger.debug(f"收集的链接: {collected_links[:5]}")
+        # 注意：新设计中不再依赖小红书链接，直接搜索官网
+        collected_links: List[str] = []
+        logger.info(f"知识点模型中不提供链接，直接搜索官网")
 
         # 使用提示词模型生成任务
         if collected_links:

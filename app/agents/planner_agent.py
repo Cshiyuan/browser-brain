@@ -1,6 +1,6 @@
 """旅行规划Agent - 基于Browser-Use AI"""
 import asyncio
-from typing import List, Any, Coroutine
+from typing import List, Any, Coroutine, Union, Dict
 from datetime import datetime, timedelta
 
 from app.scrapers import DestinationGuide
@@ -8,7 +8,7 @@ from app.scrapers.xhs_scraper import XHSScraper
 from app.scrapers.official_scraper import OfficialScraper
 from app.models.attraction import Attraction
 from app.models.trip_plan import TripPlan, DailyItinerary
-from app.utils.logger import setup_logger
+from app.utils import setup_logger, extract_text_from_any
 from config.settings import settings
 
 logger = setup_logger(__name__)
@@ -168,22 +168,22 @@ class PlannerAgent:
             try:
                 self._log(f"   📍 [{idx}/{len(must_visit)}] 爬取官网: {attraction_name}")
 
-                # 获取小红书笔记
-                xhs_notes = xhs_results.get(attraction_name, [])
+                # 获取小红书知识点
+                xhs_information = xhs_results.get(attraction_name, [])
 
                 # 爬取官网信息
                 official_scraper = OfficialScraper(headless=self.headless)
                 # 注册到活跃列表
                 self.active_scrapers.append(official_scraper)
-                official_info = await official_scraper.get_official_info(attraction_name, xhs_notes)
+                official_info = await official_scraper.get_official_info(attraction_name, xhs_information)
 
                 # 构建景点对象
                 attraction = Attraction(name=attraction_name, city=destination)
 
-                # 添加小红书数据
+                # 添加小红书知识点数据
                 attraction.add_raw_data("xiaohongshu", {
-                    "notes": [note.dict() for note in xhs_notes],
-                    "total_notes": len(xhs_notes)
+                    "information": [info.dict() for info in xhs_information],
+                    "total_count": len(xhs_information)
                 })
 
                 # 添加官网信息
@@ -209,16 +209,16 @@ class PlannerAgent:
         """计算景点推荐分数"""
         score = 0.0
 
-        # 小红书热度
+        # 小红书热度（基于知识点热度分数）
         xhs_data = attraction.get_context("raw_data.xiaohongshu")
-        if xhs_data and "notes" in xhs_data:
-            notes = xhs_data["notes"]
-            if notes:
-                avg_engagement = sum(
-                    note.get("likes", 0) + note.get("collects", 0)
-                    for note in notes
-                ) / len(notes)
-                score += min(avg_engagement / 1000, 50)
+        if xhs_data and "information" in xhs_data:
+            information = xhs_data["information"]
+            if information:
+                avg_popularity = sum(
+                    info.get("popularity_score", 0)
+                    for info in information
+                ) / len(information)
+                score += min(avg_popularity / 100, 50)
 
         # 有官网信息加分
         if attraction.get_context("raw_data.official"):
@@ -336,12 +336,13 @@ class PlannerAgent:
         notes = []
 
         for attraction in attractions:
-            # 从 context 中获取小红书笔记
+            # 从 context 中获取小红书知识点
             xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_notes = xhs_data.get("notes", [])[:2]
+            xhs_information = xhs_data.get("information", [])[:2]
 
-            for note in xhs_notes:
-                content = note.get("content", "")
+            for info in xhs_information:
+                info_data = info.get("attraction_information", {})
+                content = extract_text_from_any(info_data)
                 if any(keyword in content for keyword in ["提前", "预约", "排队", "注意"]):
                     snippet = content[:100]
                     notes.append(f"{attraction.name}: {snippet}")
@@ -358,15 +359,15 @@ class PlannerAgent:
         highlights = []
 
         for attraction in attractions[:3]:
-            # 从 context 中获取小红书笔记
+            # 从 context 中获取小红书知识点
             xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_notes = xhs_data.get("notes", [])[:2]
+            xhs_information = xhs_data.get("information", [])[:2]
 
-            for note in xhs_notes:
-                content = note.get("content", "")
-                title = note.get("title", "")
+            for info in xhs_information:
+                info_data = info.get("attraction_information", {})
+                content = extract_text_from_any(info_data)
                 if any(word in content for word in ["必打卡", "绝美", "震撼", "推荐"]):
-                    highlights.append(f"{attraction.name}: {title}")
+                    highlights.append(f"{attraction.name}: {content[:50]}...")
 
         return highlights
 
@@ -381,12 +382,13 @@ class PlannerAgent:
         ]
 
         for attraction in attractions:
-            # 从 context 中获取小红书笔记
+            # 从 context 中获取小红书知识点
             xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_notes = xhs_data.get("notes", [])
+            xhs_information = xhs_data.get("information", [])
 
-            for note in xhs_notes:
-                content = note.get("content", "")
+            for info in xhs_information:
+                info_data = info.get("attraction_information", {})
+                content = extract_text_from_any(info_data)
                 if "建议" in content or "攻略" in content:
                     tips.append(f"{attraction.name}攻略详见小红书")
                     break

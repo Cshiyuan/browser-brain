@@ -1,10 +1,9 @@
 """基于Browser-Use的AI驱动爬虫基类"""
 import asyncio
-from typing import Optional, Any, TypeVar, Callable, Dict, List, Literal, Set
-from browser_use import Agent, BrowserSession, BrowserProfile, ChatGoogle
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
+from typing import Optional, Any, TypeVar, Callable, Dict, List, Literal
+from browser_use import Agent, BrowserSession, BrowserProfile
 from pydantic import BaseModel
+from app.llm import LLMFactory
 from app.utils.logger import setup_logger
 from app.models.prompts import SystemPrompts
 from config.settings import settings
@@ -34,8 +33,8 @@ class BrowserUseScraper:
         self.headless = headless if headless is not None else settings.HEADLESS
         self.fast_mode = fast_mode
         self.keep_alive = keep_alive
-        self.llm = self._initialize_llm()
-        self.active_sessions: Set[Any] = set()  # 追踪活跃的浏览器会话
+        self.llm = LLMFactory.create_llm()
+        self.active_sessions: List[Any] = []  # 追踪活跃的浏览器会话
         self._sessions_lock = asyncio.Lock()  # 并发保护锁
 
 
@@ -251,7 +250,7 @@ class BrowserUseScraper:
                         task=task,
                         output_model=output_model,
                         max_steps=max_steps,
-                        use_vision='auto',
+                        use_vision=False,  # 禁用视觉能力以避免截图超时
                         window_config=window_config
                     )
 
@@ -297,47 +296,6 @@ class BrowserUseScraper:
         logger.info("=" * 60)
 
         return result_dict
-
-    @staticmethod
-    def _initialize_llm():
-        """初始化LLM"""
-        logger.info("📍 STEP 1: 初始化LLM配置")
-        provider = settings.LLM_PROVIDER.lower()
-        model = settings.LLM_MODEL
-        logger.info(f"   🤖 LLM配置: provider={provider}, model={model}")
-
-        if provider == "google":
-            if not settings.GOOGLE_API_KEY:
-                logger.error("GOOGLE_API_KEY未设置")
-                raise ValueError("GOOGLE_API_KEY not set in environment")
-            logger.info(f"   ✓ 使用 Google Gemini: {model}")
-            # 使用 browser-use 内置的 ChatGoogle 类
-            return ChatGoogle(
-                model=model,
-                api_key=settings.GOOGLE_API_KEY
-            )
-        elif provider == "anthropic":
-            if not settings.ANTHROPIC_API_KEY:
-                logger.error("ANTHROPIC_API_KEY未设置")
-                raise ValueError("ANTHROPIC_API_KEY not set in environment")
-            logger.info(f"✓ 使用 Anthropic Claude: {model}")
-            return ChatAnthropic(
-                stop=[],
-                model_name=model,
-                timeout=None,
-                api_key=settings.ANTHROPIC_API_KEY
-            )
-        else:  # default to OpenAI
-            if not settings.OPENAI_API_KEY:
-                logger.error("OPENAI_API_KEY未设置")
-                raise ValueError("OPENAI_API_KEY not set in environment")
-            logger.info(f"✓ 使用 OpenAI: {model}")
-            return ChatOpenAI(
-                model=model,
-                api_key=settings.OPENAI_API_KEY
-            )
-
-
 
     def _log_agent_steps(self, history):
         """详细记录 Agent 执行的每一步"""
@@ -403,7 +361,7 @@ class BrowserUseScraper:
             task: str,
             output_model: Optional[type[BaseModel]] = None,
             max_steps: int = 20,
-            use_vision: bool | Literal['auto']  = 'auto',
+            use_vision: bool | Literal['auto']  = False,  # 默认禁用视觉能力
             window_config: Optional[Dict] = None
     ) -> dict:
         """
@@ -431,7 +389,7 @@ class BrowserUseScraper:
 
         # 注册浏览器会话到活跃列表（并发安全）
         async with self._sessions_lock:
-            self.active_sessions.add(browser_session)
+            self.active_sessions.append(browser_session)
 
         try:
             logger.info("📍 STEP 5: 创建AI Agent")
@@ -520,7 +478,8 @@ class BrowserUseScraper:
                 await browser_session.stop()
                 # 从活跃列表中移除（并发安全）
                 async with self._sessions_lock:
-                    self.active_sessions.discard(browser_session)
+                    if browser_session in self.active_sessions:
+                        self.active_sessions.remove(browser_session)
                 logger.debug("✓ 浏览器会话已关闭")
             except Exception as e:
                 logger.warning(f"⚠️  关闭浏览器警告: {e}")
