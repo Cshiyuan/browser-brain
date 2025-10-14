@@ -254,10 +254,16 @@ class BrowserUseScraper:
                         window_config=window_config
                     )
 
-                    # 解析结果
-                    if result["status"] == "success" and result.get("is_successful"):
+                    # 解析结果（即使 is_successful=False，只要有数据就接受）
+                    if result["status"] == "success" and result.get("data"):
                         parsed_result = parse_result_fn(result["data"])
-                        logger.info(f"   ✅ 成功: {item_name}")
+
+                        # 检查是否完全成功
+                        if result.get("is_successful"):
+                            logger.info(f"   ✅ 完全成功: {item_name}")
+                        else:
+                            logger.warning(f"   ⚠️  部分成功: {item_name}（AI 未完成全部目标，但已返回部分数据）")
+
                         return item_name, parsed_result
                     else:
                         logger.warning(f"   ❌ 失败: {item_name}")
