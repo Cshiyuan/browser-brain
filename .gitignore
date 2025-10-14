@@ -39,6 +39,14 @@ logs/
 data/cache/
 data/db/
 
+# 浏览器数据
+data/browser/tmp_user_data_*/
+
+# 旧的配置文件（兼容）
+browser_profile_storage.json
+browser_profile_storage.json.bak
+data/browser/storage_state.json
+
 # IDE
 .vscode/
 .idea/

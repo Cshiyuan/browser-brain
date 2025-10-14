@@ -28,9 +28,8 @@ class XHSPrompts:
     具体步骤：
     1. 使用 go_to_url 操作访问: https://www.xiaohongshu.com/search_result?keyword={destination}旅游攻略
     2. 使用 wait 操作等待 2-3 秒确保页面加载
-    3. 使用 scroll 操作向下滚动 2 页以加载更多结果
-    4. 识别相关性更高的笔记，依次选择
-    5. 针对每篇笔记：
+    3. 识别相关性更高的笔记，依次选择（笔记不够时，则向下滑动查找）
+    4. 针对每篇笔记：
        a. 使用 click 操作打开笔记
        b. 使用 extract 操作提取景点信息：
           - 景点名称（明确的景点名）
@@ -66,8 +65,7 @@ class XHSPrompts:
 具体步骤：
 1. 使用 go_to_url 操作访问: https://www.xiaohongshu.com/search_result?keyword={attraction_name}攻略
 2. 使用 wait 操作等待 2-3 秒确保页面加载
-3. 使用 scroll 操作向下滚动 1-2 页以加载更多结果
-4. 识别相关性更高的笔记，依次选择
+3. 识别相关性更高的笔记，依次选择
    a. 使用 click 操作打开笔记
    b. 使用 extract 和 screenshot 操作提取以下信息：
       - 笔记标题

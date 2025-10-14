@@ -279,205 +279,194 @@ if st.button("🚀 开始智能规划", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            # 异步执行规划任务
-            async def run_planning():
-                # 更新进度
-                st.session_state.planning_logs = []
+            # 定义日志回调函数
+            def add_log(message: str):
+                st.session_state.planning_logs.append(message)
+                # 实时更新日志显示
+                filtered = filter_logs(st.session_state.planning_logs, log_levels)
+                colored_logs = [colorize_log(log) for log in filtered[-50:]]  # 最新50条
+                log_container.text("\n".join(colored_logs))
 
-                # 定义日志回调函数
-                def add_log(message: str):
-                    st.session_state.planning_logs.append(message)
-                    # 实时更新日志显示
-                    filtered = filter_logs(st.session_state.planning_logs, log_levels)
-                    colored_logs = [colorize_log(log) for log in filtered[-50:]]  # 最新50条
-                    log_container.text("\n".join(colored_logs))
+            # 注册全局回调（所有 logger 共享）
+            add_global_callback("frontend", add_log)
 
-                # 注册全局回调（所有 logger 共享）
-                add_global_callback("frontend", add_log)
-
+            # 执行规划任务
+            try:
                 st.session_state.planning_logs.append("📦 初始化浏览器...")
                 status_text.text("📦 初始化浏览器...")
                 progress_bar.progress(10)
 
-                ## 初始化agent（不再需要传递 log_callback）
+                ## 初始化agent
                 planner = PlannerAgent(headless=headless_mode)
 
-                try:
-                    st.session_state.planning_logs.append("🔍 开始收集景点信息...")
-                    status_text.text("🔍 收集景点信息...")
-                    progress_bar.progress(30)
+                st.session_state.planning_logs.append("🔍 开始收集景点信息...")
+                status_text.text("🔍 收集景点信息...")
+                progress_bar.progress(30)
 
-                    result = await planner.plan_trip(
-                        departure=departure,
-                        destination=destination,
-                        days=int(days),
-                        must_visit=must_visit_list
-                    )
+                # 异步调用规划
+                result = asyncio.run(planner.plan_trip(
+                    departure=departure,
+                    destination=destination,
+                    days=int(days),
+                    must_visit=must_visit_list
+                ))
 
-                    st.session_state.planning_logs.append("✅ 规划完成！")
-                    status_text.text("✅ 规划完成！")
-                    progress_bar.progress(100)
+                st.session_state.planning_logs.append("✅ 规划完成！")
+                status_text.text("✅ 规划完成！")
+                progress_bar.progress(100)
 
-                    # 保存方案
-                    plan_data = {
-                        "timestamp": datetime.now().isoformat(),
-                        "departure": departure,
-                        "destination": destination,
-                        "days": days,
-                        "must_visit": must_visit_list,
-                        "plan_text": result,
-                        "logs": st.session_state.planning_logs
-                    }
+                # 保存方案
+                plan_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "departure": departure,
+                    "destination": destination,
+                    "days": days,
+                    "must_visit": must_visit_list,
+                    "plan_text": result,
+                    "logs": st.session_state.planning_logs
+                }
 
-                    # 保存到文件
-                    plan_filename = f"{destination}_{days}日游_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    plan_path = PLANS_DIR / plan_filename
-                    with open(plan_path, 'w', encoding='utf-8') as f:
-                        json.dump(plan_data, f, ensure_ascii=False, indent=2)
+                # 保存到文件
+                plan_filename = f"{destination}_{days}日游_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                plan_path = PLANS_DIR / plan_filename
+                with open(plan_path, 'w', encoding='utf-8') as f:
+                    json.dump(plan_data, f, ensure_ascii=False, indent=2)
 
-                    st.session_state.current_plan = plan_data
-
-                    return result, None
-
-                except Exception as e:
-                    logger.error(f"规划失败: {e}", exc_info=True)
-                    st.session_state.planning_logs.append(f"❌ 错误: {e}")
-                    return None, str(e)
-
-                finally:
-                    # 清理全局回调（避免内存泄漏）
-                    remove_global_callback("frontend")
-
-            # 运行异步任务
-            try:
-                result, error = asyncio.run(run_planning())
-
-                # 清除进度指示器
-                progress_bar.empty()
-                status_text.empty()
-
-                # 规划完成，更新状态
-                st.session_state.is_planning = False
-
-                if error:
-                    st.error(f"❌ 规划失败: {error}")
-                    # 显示错误日志
-                    if st.session_state.planning_logs:
-                        with st.expander("📋 查看日志"):
-                            st.markdown('<div class="log-box">', unsafe_allow_html=True)
-                            for log in st.session_state.planning_logs:
-                                st.text(log)
-                            st.markdown('</div>', unsafe_allow_html=True)
-                else:
-                    # 显示结果
-                    st.success("✅ 旅行方案生成成功！")
-
-                    # 使用tabs展示不同部分
-                    tab1, tab2, tab3, tab4 = st.tabs(["📋 完整方案", "🎯 景点详情", "📊 执行日志", "💡 实用贴士"])
-
-                    with tab1:
-                        st.markdown('<div class="result-box">', unsafe_allow_html=True)
-                        st.markdown(result)
-                        st.markdown('</div>', unsafe_allow_html=True)
-
-                        # 下载按钮
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.download_button(
-                                label="📥 下载方案 (TXT)",
-                                data=result,
-                                file_name=f"{destination}_{days}日游方案.txt",
-                                mime="text/plain"
-                            )
-                        with col_b:
-                            st.download_button(
-                                label="📥 下载方案 (JSON)",
-                                data=json.dumps(st.session_state.current_plan, ensure_ascii=False, indent=2),
-                                file_name=f"{destination}_{days}日游方案.json",
-                                mime="application/json"
-                            )
-
-                    with tab2:
-                        st.subheader("🎯 景点详细信息")
-                        # 这里可以展示每个景点的详细信息
-                        if must_visit_list:
-                            for idx, attraction in enumerate(must_visit_list, 1):
-                                with st.container():
-                                    st.markdown(f'<div class="attraction-card">', unsafe_allow_html=True)
-                                    st.markdown(f"### {idx}. {attraction}")
-                                    st.markdown(f"**城市**: {destination}")
-                                    st.markdown("**数据来源**: AI智能收集")
-                                    st.info("💡 详细信息将在后续版本中展示（包括门票、开放时间、推荐游玩时长等）")
-                                    st.markdown('</div>', unsafe_allow_html=True)
-                        else:
-                            st.info("暂无景点详情")
-
-                    with tab3:
-                        st.subheader("📊 规划执行日志")
-
-                        # 日志过滤和导出工具栏
-                        col_log1, col_log2 = st.columns([3, 1])
-                        with col_log1:
-                            filter_levels = st.multiselect(
-                                "过滤日志级别",
-                                ["DEBUG", "INFO", "WARNING", "ERROR"],
-                                default=log_levels,
-                                key="log_filter_tab3"
-                            )
-                        with col_log2:
-                            if st.session_state.planning_logs:
-                                log_export_text = "\n".join(st.session_state.planning_logs)
-                                st.download_button(
-                                    label="📥 导出日志",
-                                    data=log_export_text,
-                                    file_name=f"planning_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                                    mime="text/plain",
-                                    key="download_log_tab3"
-                                )
-
-                        # 显示过滤后的日志
-                        if st.session_state.planning_logs:
-                            filtered_logs = filter_logs(st.session_state.planning_logs, filter_levels)
-                            st.markdown('<div class="log-box">', unsafe_allow_html=True)
-                            for log in filtered_logs:
-                                colored_log = colorize_log(log)
-                                st.text(colored_log)
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            st.caption(f"共 {len(filtered_logs)} 条日志（过滤前: {len(st.session_state.planning_logs)} 条）")
-                        else:
-                            st.info("暂无日志")
-
-                    with tab4:
-                        st.subheader("💡 实用贴士")
-                        st.markdown(f"""
-                        ### 🗺️ {destination}旅行建议
-
-                        #### 📅 行程时长
-                        - 建议游玩时长: {days}天
-
-                        #### 🎫 预订建议
-                        - 提前预订景点门票，避免现场排队
-                        - 关注景点官网或小红书获取最新优惠信息
-
-                        #### 🚗 交通建议
-                        - 出发地: {departure}
-                        - 目的地: {destination}
-                        - 建议查询高铁/飞机票价格对比
-
-                        #### ⚠️ 注意事项
-                        - 查看天气预报，准备合适衣物
-                        - 景点可能有淡旺季价格差异
-                        - 部分景点需要提前预约
-
-                        #### 📱 实用APP推荐
-                        - 小红书: 查看最新游记和攻略
-                        - 高德/百度地图: 导航和路线规划
-                        - 大众点评/美团: 餐饮和住宿预订
-                        """)
+                st.session_state.current_plan = plan_data
+                error = None
 
             except Exception as e:
-                st.error(f"❌ 系统错误: {e}")
-                logger.error(f"系统错误: {e}", exc_info=True)
+                logger.error(f"规划失败: {e}", exc_info=True)
+                st.session_state.planning_logs.append(f"❌ 错误: {e}")
+                result = None
+                error = str(e)
+
+            finally:
+                # 清理全局回调（避免内存泄漏）
+                remove_global_callback("frontend")
+
+            # 清除进度指示器
+            progress_bar.empty()
+            status_text.empty()
+
+            # 规划完成，更新状态
+            st.session_state.is_planning = False
+
+            if error:
+                st.error(f"❌ 规划失败: {error}")
+                # 显示错误日志
+                if st.session_state.planning_logs:
+                    with st.expander("📋 查看日志"):
+                        st.markdown('<div class="log-box">', unsafe_allow_html=True)
+                        for log in st.session_state.planning_logs:
+                            st.text(log)
+                        st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                # 显示结果
+                st.success("✅ 旅行方案生成成功！")
+
+                # 使用tabs展示不同部分
+                tab1, tab2, tab3, tab4 = st.tabs(["📋 完整方案", "🎯 景点详情", "📊 执行日志", "💡 实用贴士"])
+
+                with tab1:
+                    st.markdown('<div class="result-box">', unsafe_allow_html=True)
+                    st.markdown(result)
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                    # 下载按钮
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.download_button(
+                            label="📥 下载方案 (TXT)",
+                            data=result,
+                            file_name=f"{destination}_{days}日游方案.txt",
+                            mime="text/plain"
+                        )
+                    with col_b:
+                        st.download_button(
+                            label="📥 下载方案 (JSON)",
+                            data=json.dumps(st.session_state.current_plan, ensure_ascii=False, indent=2),
+                            file_name=f"{destination}_{days}日游方案.json",
+                            mime="application/json"
+                        )
+
+                with tab2:
+                    st.subheader("🎯 景点详细信息")
+                    # 这里可以展示每个景点的详细信息
+                    if must_visit_list:
+                        for idx, attraction in enumerate(must_visit_list, 1):
+                            with st.container():
+                                st.markdown(f'<div class="attraction-card">', unsafe_allow_html=True)
+                                st.markdown(f"### {idx}. {attraction}")
+                                st.markdown(f"**城市**: {destination}")
+                                st.markdown("**数据来源**: AI智能收集")
+                                st.info("💡 详细信息将在后续版本中展示（包括门票、开放时间、推荐游玩时长等）")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                    else:
+                        st.info("暂无景点详情")
+
+                with tab3:
+                    st.subheader("📊 规划执行日志")
+
+                    # 日志过滤和导出工具栏
+                    col_log1, col_log2 = st.columns([3, 1])
+                    with col_log1:
+                        filter_levels = st.multiselect(
+                            "过滤日志级别",
+                            ["DEBUG", "INFO", "WARNING", "ERROR"],
+                            default=log_levels,
+                            key="log_filter_tab3"
+                        )
+                    with col_log2:
+                        if st.session_state.planning_logs:
+                            log_export_text = "\n".join(st.session_state.planning_logs)
+                            st.download_button(
+                                label="📥 导出日志",
+                                data=log_export_text,
+                                file_name=f"planning_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                                mime="text/plain",
+                                key="download_log_tab3"
+                            )
+
+                    # 显示过滤后的日志
+                    if st.session_state.planning_logs:
+                        filtered_logs = filter_logs(st.session_state.planning_logs, filter_levels)
+                        st.markdown('<div class="log-box">', unsafe_allow_html=True)
+                        for log in filtered_logs:
+                            colored_log = colorize_log(log)
+                            st.text(colored_log)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        st.caption(f"共 {len(filtered_logs)} 条日志（过滤前: {len(st.session_state.planning_logs)} 条）")
+                    else:
+                        st.info("暂无日志")
+
+                with tab4:
+                    st.subheader("💡 实用贴士")
+                    st.markdown(f"""
+                    ### 🗺️ {destination}旅行建议
+
+                    #### 📅 行程时长
+                    - 建议游玩时长: {days}天
+
+                    #### 🎫 预订建议
+                    - 提前预订景点门票，避免现场排队
+                    - 关注景点官网或小红书获取最新优惠信息
+
+                    #### 🚗 交通建议
+                    - 出发地: {departure}
+                    - 目的地: {destination}
+                    - 建议查询高铁/飞机票价格对比
+
+                    #### ⚠️ 注意事项
+                    - 查看天气预报，准备合适衣物
+                    - 景点可能有淡旺季价格差异
+                    - 部分景点需要提前预约
+
+                    #### 📱 实用APP推荐
+                    - 小红书: 查看最新游记和攻略
+                    - 高德/百度地图: 导航和路线规划
+                    - 大众点评/美团: 餐饮和住宿预订
+                    """)
 
 # 显示历史方案（如果已加载）
 if st.session_state.current_plan and not st.button("🚀 开始智能规划", type="primary", key="btn_replan"):

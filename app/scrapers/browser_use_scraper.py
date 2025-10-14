@@ -1,6 +1,6 @@
 """基于Browser-Use的AI驱动爬虫基类"""
 import asyncio
-from typing import Optional, Any, TypeVar, Callable, Dict, List, Literal
+from typing import Optional, Any, TypeVar, Callable, Dict, List, Literal, Set
 from browser_use import Agent, BrowserSession, BrowserProfile, ChatGoogle
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -35,6 +35,8 @@ class BrowserUseScraper:
         self.fast_mode = fast_mode
         self.keep_alive = keep_alive
         self.llm = self._initialize_llm()
+        self.active_sessions: Set[Any] = set()  # 追踪活跃的浏览器会话
+        self._sessions_lock = asyncio.Lock()  # 并发保护锁
 
 
 
@@ -46,6 +48,10 @@ class BrowserUseScraper:
         Returns:
             BrowserProfile 对象
         """
+        import uuid
+        import time
+        from pathlib import Path
+
         # 基础反检测参数
         browser_args = [
             '--disable-blink-features=AutomationControlled',  # 隐藏自动化标识
@@ -78,16 +84,30 @@ class BrowserUseScraper:
             wait_actions = 1.0
             logger.info("🐢 标准模式：模拟真实用户行为")
 
-        BROWSER_PROFILE_STORAGE_PATH = "browser_profile_storage.json"
+        # 浏览器数据存储配置
+        browser_data_dir = Path("data/browser")
+        browser_data_dir.mkdir(parents=True, exist_ok=True)
+
+        # storage_state：固定路径（保存 cookies）
+        storage_state_path = browser_data_dir / "storage_state.json"
+
+        # user_data_dir：随机临时目录
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        user_data_path = browser_data_dir / f"tmp_user_data_{timestamp}_{unique_id}"
+
+        logger.info(f"📁 浏览器存储配置:")
+        logger.info(f"   - storage_state: {storage_state_path}")
+        logger.info(f"   - user_data_dir: {user_data_path}")
 
         # 构建配置参数字典
         profile_kwargs = {
-            "storage_state": BROWSER_PROFILE_STORAGE_PATH,
+            "storage_state": str(storage_state_path),
             "keep_alive": self.keep_alive,
             "headless": self.headless,
             "dom_highlight_elements": True,
             "disable_security": False,
-            "user_data_dir": None,
+            "user_data_dir": str(user_data_path),
             "args": browser_args,
             "ignore_default_args": ['--enable-automation'],
             "wait_for_network_idle_page_load_time": wait_page_load,
@@ -206,39 +226,49 @@ class BrowserUseScraper:
         logger.info(f"   最大并发数: {max_concurrent}")
         logger.info("=" * 60)
 
+        # 创建窗口位置池（预先计算好所有位置）
+        position_pool: asyncio.Queue = asyncio.Queue()
+        for i in range(max_concurrent):
+            window_config = self.calculate_window_layout(i, max_concurrent)
+            await position_pool.put(window_config)
+        logger.info(f"   ✓ 窗口位置池初始化完成（{max_concurrent} 个位置）")
+
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def scrape_single(index: int, item_name: str):
+        async def scrape_with_semaphore(item_name: str):
             """为单个项目爬取（复用 scrape() 方法）"""
-            async with semaphore:
-                logger.info(f"📍 [{index + 1}/{len(items)}] 开始爬取: {item_name}")
+            # 从池中借用窗口位置
+            window_config = await position_pool.get()
+            try:
+                async with semaphore:
+                    logger.info(f"📍 开始爬取: {item_name}")
 
-                # 计算窗口布局（传入窗口总数）
-                window_config = self.calculate_window_layout(index, total_windows=len(items))
+                    # 生成任务
+                    task = scrape_task_fn(item_name)
 
-                # 生成任务
-                task = scrape_task_fn(item_name)
+                    # 调用 scrape() 方法
+                    result = await self.scrape(
+                        task=task,
+                        output_model=output_model,
+                        max_steps=max_steps,
+                        use_vision='auto',
+                        window_config=window_config
+                    )
 
-                # 调用 scrape() 方法
-                result = await self.scrape(
-                    task=task,
-                    output_model=output_model,
-                    max_steps=max_steps,
-                    use_vision='auto',
-                    window_config=window_config
-                )
-
-                # 解析结果
-                if result["status"] == "success" and result.get("is_successful"):
-                    parsed_result = parse_result_fn(result["data"])
-                    logger.info(f"   ✅ [{index + 1}/{len(items)}] 成功: {item_name}")
-                    return item_name, parsed_result
-                else:
-                    logger.warning(f"   ❌ [{index + 1}/{len(items)}] 失败: {item_name}")
-                    return item_name, None
+                    # 解析结果
+                    if result["status"] == "success" and result.get("is_successful"):
+                        parsed_result = parse_result_fn(result["data"])
+                        logger.info(f"   ✅ 成功: {item_name}")
+                        return item_name, parsed_result
+                    else:
+                        logger.warning(f"   ❌ 失败: {item_name}")
+                        return item_name, None
+            finally:
+                # 归还窗口位置到池中
+                await position_pool.put(window_config)
 
         # 并发执行
-        tasks = [scrape_single(idx, name) for idx, name in enumerate(items)]
+        tasks = [scrape_with_semaphore(name) for name in items]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 汇总结果
@@ -399,6 +429,10 @@ class BrowserUseScraper:
         browser_profile = self.create_browser_profile(window_config)
         browser_session = BrowserSession(browser_profile=browser_profile)
 
+        # 注册浏览器会话到活跃列表（并发安全）
+        async with self._sessions_lock:
+            self.active_sessions.add(browser_session)
+
         try:
             logger.info("📍 STEP 5: 创建AI Agent")
             # Fast Mode优化：添加速度优化提示词和flash_mode
@@ -484,9 +518,32 @@ class BrowserUseScraper:
             # 关闭浏览器会话
             try:
                 await browser_session.stop()
+                # 从活跃列表中移除（并发安全）
+                async with self._sessions_lock:
+                    self.active_sessions.discard(browser_session)
                 logger.debug("✓ 浏览器会话已关闭")
             except Exception as e:
                 logger.warning(f"⚠️  关闭浏览器警告: {e}")
 
+    async def close(self):
+        """关闭所有活跃的浏览器会话"""
+        if not self.active_sessions:
+            logger.debug("无需清理（没有活跃的浏览器会话）")
+            return
+
+        # 获取会话副本并清空集合（并发安全）
+        async with self._sessions_lock:
+            sessions_to_close = list(self.active_sessions)
+            self.active_sessions.clear()
+
+        logger.info(f"🧹 关闭 {len(sessions_to_close)} 个浏览器会话...")
+        for i, session in enumerate(sessions_to_close, 1):
+            try:
+                await session.stop()
+                logger.debug(f"   ✓ [{i}/{len(sessions_to_close)}] 浏览器会话已关闭")
+            except Exception as e:
+                logger.warning(f"   ⚠️ [{i}/{len(sessions_to_close)}] 关闭会话警告: {e}")
+
+        logger.info("✅ 浏览器资源清理完成")
 
 

@@ -129,136 +129,6 @@ Streamlit 单体架构：前后端运行在同一进程，通过直接函数调�
           格式化输出 → 显示给用户
 ```
 
-## 🔑 关键设计模式
-
-### 1. 上下文数据模型
-
-`TripPlan` 和 `Attraction` 使用灵活的上下文字典而非固定属性。
-
-```python
-# ✅ 正确：使用 get() 方法
-itinerary_data = plan.get("ai_planning.itinerary", {})
-highlights = plan.get("ai_planning.highlights", [])
-
-# ❌ 错误：直接访问属性
-plan.daily_itineraries  # AttributeError!
-```
-
-### 2. 爬虫数据模型统一管理
-
-所有爬虫使用的 Pydantic 模型统一定义在 `app/scrapers/models.py` 中。
-
-**模型分层架构**：
-```
-app/scrapers/models.py (爬虫数据模型)
-  - XHSNoteOutput
-  - XHSNotesCollection
-  - OfficialInfoOutput
-  ↓ 转换
-app/models/ (业务数据模型)
-  - XHSNote
-  - Attraction
-  - TripPlan
-```
-
-### 3. AI 提示词统一管理
-
-所有 AI 任务提示词统一定义在 `app/models/prompts.py` 中。
-
-```python
-from app.models.prompts import XHSPrompts, OfficialPrompts, SystemPrompts
-
-# 生成小红书搜索任务提示词
-task = XHSPrompts.search_attraction_task("北京故宫", max_notes=5)
-
-# 生成官网信息提取任务提示词
-task = OfficialPrompts.get_official_info_without_links_task("北京故宫")
-
-# 使用系统速度优化提示词
-agent = Agent(extend_system_message=SystemPrompts.SPEED_OPTIMIZATION)
-```
-
-**提示词模型定义**：
-```python
-class SystemPrompts:
-    """系统级提示词"""
-    SPEED_OPTIMIZATION = "..."
-
-class XHSPrompts:
-    """小红书爬虫提示词"""
-    @staticmethod
-    def search_attraction_task(attraction_name: str, max_notes: int) -> str:
-        return f"任务：在小红书搜索"{attraction_name}"..."
-
-class OfficialPrompts:
-    """官网爬虫提示词"""
-    @staticmethod
-    def get_official_info_with_links_task(...) -> str:
-        return "..."
-```
-
-### 4. Browser-Use AI 集成
-
-所有爬虫继承自 `BrowserUseScraper` 基类：
-
-```python
-class XHSScraper(BrowserUseScraper):
-    async def scrape(self, attraction_name: str, max_notes: int):
-        # 使用提示词模型生成任务
-        task = XHSPrompts.search_attraction_task(attraction_name, max_notes)
-
-        # AI 执行任务
-        result = await self.scrape_with_task(
-            task=task,
-            output_model=XHSNotesCollection,
-            max_steps=30
-        )
-        return self._parse_result(result)
-```
-
-**核心方法** (`app/scrapers/browser_use_scraper.py`):
-```python
-async def scrape_with_task(
-    self,
-    task: str,                                      # 任务描述
-    output_model: Optional[type[BaseModel]] = None, # Pydantic模型
-    max_steps: int = 20,                            # 最大步骤数
-    use_vision: bool = True                         # 是否使用视觉能力
-) -> dict
-```
-
-### 5. Pydantic 数据验证
-
-所有模型字段必须类型匹配：
-
-```python
-# ✅ 正确：类型转换
-DailyItinerary(
-    date=str(datetime.date(2025, 10, 4)),
-    notes="\n".join(["提示1", "提示2"])
-)
-
-XHSNote(created_at=datetime.now().isoformat())
-
-# ❌ 错误：类型不匹配
-DailyItinerary(
-    date=datetime.date(2025, 10, 4),  # 期望 str
-    notes=["提示1", "提示2"]           # 期望 str
-)
-```
-
-### 6. 异步并发
-
-使用 `asyncio.gather()` 实现并发爬取：
-
-```python
-# 并发爬取多个景点
-tasks = [
-    self._scrape_single_attraction_ai(dest, attr, xhs, official)
-    for attr in must_visit
-]
-results = await asyncio.gather(*tasks, return_exceptions=True)
-```
 
 ## ⚙️ 配置说明
 
@@ -278,6 +148,23 @@ MAX_SCRAPE_TIMEOUT=300
 # Web 界面
 STREAMLIT_SERVER_PORT=8501
 ```
+
+### 数据目录结构
+
+```
+data/
+├── browser/                       # 浏览器数据
+│   ├── storage_state.json        # 持久化 cookies（保留登录状态）
+│   └── tmp_user_data_*/              # 临时用户数据目录（会话级，自动生成）
+├── cache/                         # 缓存数据
+├── db/                            # 数据库文件
+└── plans/                         # 旅行方案
+```
+
+**说明**：
+- `storage_state.json`：保存登录 cookies，避免重复登录
+- `tmp_user_data_*`：每次运行自动生成随机临时目录，包含完整浏览器状态
+- 清理临时目录：运行 `./scripts/cleanup_browser_data.sh`
 
 ### Pylint 配置
 
@@ -399,88 +286,6 @@ KISS 原则强调：
 
 ---
 
-## ⚡ Fast Mode 速度优化策略
-
-基于 Browser-Use 官方 Fast Agent 模板优化爬虫性能。
-
-### 核心优化技术
-
-**1. Flash Mode（LLM 优化）**
-
-禁用 LLM 的"thinking"过程，直接输出决策：
-```python
-agent = Agent(
-    task=task,
-    llm=llm,
-    flash_mode=True,  # 关键优化
-    ...
-)
-```
-
-**效果**：LLM响应速度提升 2-3倍
-
-**2. 速度优化提示词**
-
-```python
-from app.models.prompts import SystemPrompts
-
-agent = Agent(extend_system_message=SystemPrompts.SPEED_OPTIMIZATION)
-```
-
-**3. 浏览器配置优化**
-
-| 参数 | 标准模式 | Fast Mode |
-|------|----------|-----------|
-| `wait_for_network_idle_page_load_time` | 2.0s | 0.1s |
-| `maximum_wait_page_load_time` | 10.0s | 5.0s |
-| `wait_between_actions` | 1.0s | 0.1s |
-
-### 组合使用
-
-```python
-scraper = XHSScraper(
-    headless=True,
-    fast_mode=True     # 最大化速度
-)
-# 预期效果: 2-3倍加速
-```
-
-
-## 🎓 架构决策记录
-
-### 为什么使用上下文数据模型？
-
-**优势**:
-- ✅ 灵活存储任意结构数据
-- ✅ AI 可自由填充内容
-- ✅ 扩展性强，无需修改代码
-
-### 为什么使用 Browser-Use？
-
-**相比传统爬虫**:
-- ✅ AI 自动处理页面变化
-- ✅ 自然语言描述任务
-- ✅ 无需维护选择器
-- ✅ 支持结构化输出
-
-### 为什么选择 Streamlit？
-
-**优势**:
-- ✅ 快速构建 Web UI
-- ✅ Python 原生，无需前后端分离
-- ✅ 适合 AI 应用原型
-
-**局限性**:
-- ❌ 耦合度高，难以独立扩展
-- ❌ 单点故障
-
----
-
-## 📚 相关资源
-
-- [Browser-Use 文档](https://github.com/browser-use/browser-use)
-- [Streamlit 文档](https://docs.streamlit.io)
-- [Pydantic 文档](https://docs.pydantic.dev)
 
 ## 📋 代码参考索引
 

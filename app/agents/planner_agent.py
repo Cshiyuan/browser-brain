@@ -29,6 +29,24 @@ class PlannerAgent:
         """
         self.headless = headless if headless is not None else settings.HEADLESS
         self.attractions: List[Attraction] = []
+        self.active_scrapers: List[Any] = []  # 追踪所有活跃的 scraper 实例
+
+    async def _cleanup_all_scrapers(self):
+        """清理所有 scraper 的浏览器会话"""
+        if not self.active_scrapers:
+            logger.debug("无需清理（没有活跃的 scraper）")
+            return
+
+        logger.info(f"🧹 清理 {len(self.active_scrapers)} 个 scraper 的浏览器资源...")
+        for i, scraper in enumerate(self.active_scrapers[:], 1):
+            try:
+                await scraper.close()
+                logger.debug(f"   ✓ [{i}/{len(self.active_scrapers)}] Scraper 已清理")
+            except Exception as e:
+                logger.warning(f"   ⚠️  [{i}/{len(self.active_scrapers)}] 清理警告: {e}")
+
+        self.active_scrapers.clear()
+        logger.info("✅ 所有 Scraper 资源清理完成")
 
     def _log(self, message: str):
         """内部日志方法"""
@@ -67,12 +85,12 @@ class PlannerAgent:
 
             # 补充爬取景点
             if not must_visit:
-                guide_data = await self._collect_destination_guid(destination)
+                guide_data = await self._collect_destination(destination)
                 for visit in guide_data.recommended_attractions:
                     must_visit.append(visit.name)
 
             # 根据景点，并发拉取数据
-            await self._collect_attractions_with_ai(destination, must_visit)
+            await self._collect_attractions(destination, must_visit)
             self._log(f"✅ [步骤1/3] 完成，收集到 {len(self.attractions)} 个景点")
 
             # 步骤2: 生成行程方案
@@ -97,14 +115,19 @@ class PlannerAgent:
             logger.error(f"❌ AI规划失败: {e}", exc_info=True)
             logger.error("=" * 60)
             raise
+        finally:
+            # 确保清理所有 scraper 资源
+            await self._cleanup_all_scrapers()
 
-    async def _collect_destination_guid(self, destination: str) -> DestinationGuide | None:
+    async def _collect_destination(self, destination: str) -> DestinationGuide | None:
         self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
         # 创建临时爬虫实例用于搜索攻略
         xhs_scraper = XHSScraper(
             headless=self.headless,
             keep_alive=True,
         )
+        # 注册到活跃列表
+        self.active_scrapers.append(xhs_scraper)
 
         guide_data = await xhs_scraper.search_destination_guide(
             destination=destination,
@@ -119,12 +142,14 @@ class PlannerAgent:
         # 使用提取的景点作为必去景点
         return guide_data
 
-    async def _collect_attractions_with_ai(self, destination: str, must_visit: List[str]):
+    async def _collect_attractions(self, destination: str, must_visit: List[str]):
         """使用批量方法并发收集景点信息"""
 
         # 步骤1: 批量爬取小红书数据
         self._log(f"   📱 步骤1: 批量爬取小红书数据...")
         xhs_scraper = XHSScraper(headless=self.headless)
+        # 注册到活跃列表
+        self.active_scrapers.append(xhs_scraper)
 
         xhs_results = await xhs_scraper.search_attractions_batch(
             attractions=must_visit,
@@ -148,6 +173,8 @@ class PlannerAgent:
 
                 # 爬取官网信息
                 official_scraper = OfficialScraper(headless=self.headless)
+                # 注册到活跃列表
+                self.active_scrapers.append(official_scraper)
                 official_info = await official_scraper.get_official_info(attraction_name, xhs_notes)
 
                 # 构建景点对象
