@@ -6,7 +6,6 @@
 # 导出爬虫类
 from app.scrapers.browser_use_scraper import BrowserUseScraper
 from app.scrapers.xhs_scraper import XHSScraper
-from app.scrapers.official_scraper import OfficialScraper
 
 # 导出爬虫数据模型
 from app.scrapers.models import (
@@ -14,18 +13,15 @@ from app.scrapers.models import (
     XHSInformationCollection,
     XHSAttractionRecommendation,
     DestinationGuide,
-    OfficialInfoOutput,
 )
 
 __all__ = [
     # 爬虫类
     "BrowserUseScraper",
     "XHSScraper",
-    "OfficialScraper",
     # 数据模型
     "XHSAttractionInformation",
     "XHSInformationCollection",
     "XHSAttractionRecommendation",
     "DestinationGuide",
-    "OfficialInfoOutput",
 ]

@@ -1,13 +1,11 @@
 """旅行规划Agent - 基于Browser-Use AI"""
-import asyncio
-from typing import List, Any, Coroutine, Union, Dict
-from datetime import datetime, timedelta
+from typing import List, Any
+import google.generativeai as genai
 
 from app.scrapers import DestinationGuide
 from app.scrapers.xhs_scraper import XHSScraper
-from app.scrapers.official_scraper import OfficialScraper
 from app.models.attraction import Attraction
-from app.models.trip_plan import TripPlan, DailyItinerary
+from app.models.prompts import PlannerPrompts
 from app.utils import setup_logger, extract_text_from_any
 from config.settings import settings
 
@@ -81,7 +79,7 @@ class PlannerAgent:
 
         try:
             # 步骤1: 使用AI收集景点信息
-            self._log("📍 [步骤1/3] 开始收集景点信息...")
+            self._log("📍 [步骤1/2] 开始收集景点信息...")
 
             # 补充爬取景点
             if not must_visit:
@@ -91,21 +89,16 @@ class PlannerAgent:
 
             # 根据景点，并发拉取数据
             await self._collect_attractions(destination, must_visit)
-            self._log(f"✅ [步骤1/3] 完成，收集到 {len(self.attractions)} 个景点")
+            self._log(f"✅ [步骤1/2] 完成，收集到 {len(self.attractions)} 个景点")
 
-            # 步骤2: 生成行程方案
-            self._log("📅 [步骤2/3] 开始生成行程方案...")
-            trip_plan = await self._generate_trip_plan(
+            # 步骤2: 使用 LLM 生成旅行方案
+            self._log("🤖 [步骤2/2] 使用 LLM 生成旅行方案...")
+            result = await self._generate_plan_with_llm(
                 departure=departure,
                 destination=destination,
                 days=days
             )
-            self._log("✅ [步骤2/3] 行程方案生成完成")
-
-            # 步骤3: 格式化输出
-            self._log("📝 [步骤3/3] 开始格式化输出...")
-            result = self._format_plan(trip_plan)
-            self._log("✅ [步骤3/3] 格式化完成")
+            self._log("✅ [步骤2/2] 旅行方案生成完成")
             self._log("🎉 旅行规划全部完成！")
             self._log("=" * 60)
             return result
@@ -159,23 +152,17 @@ class PlannerAgent:
 
         self._log(f"   ✅ 小红书数据收集完成: {len(xhs_results)} 个景点")
 
-        # 步骤2: 逐个爬取官网数据（保持现有逻辑）
-        self._log(f"   🌐 步骤2: 爬取官网数据...")
+        # 步骤2: 构建景点对象
+        self._log(f"   📦 步骤2: 构建景点数据...")
         success_count = 0
         fail_count = 0
 
         for idx, attraction_name in enumerate(must_visit, 1):
             try:
-                self._log(f"   📍 [{idx}/{len(must_visit)}] 爬取官网: {attraction_name}")
+                self._log(f"   📍 [{idx}/{len(must_visit)}] 构建景点: {attraction_name}")
 
                 # 获取小红书知识点
                 xhs_information = xhs_results.get(attraction_name, [])
-
-                # 爬取官网信息
-                official_scraper = OfficialScraper(headless=self.headless)
-                # 注册到活跃列表
-                self.active_scrapers.append(official_scraper)
-                official_info = await official_scraper.get_official_info(attraction_name, xhs_information)
 
                 # 构建景点对象
                 attraction = Attraction(name=attraction_name, city=destination)
@@ -186,18 +173,9 @@ class PlannerAgent:
                     "total_count": len(xhs_information)
                 })
 
-                # 添加官网信息
-                if official_info:
-                    attraction.add_raw_data("official",
-                                            official_info.dict() if hasattr(official_info, 'dict') else official_info)
-
-                # 计算推荐分数
-                attraction.recommendation_score = self._calculate_recommendation_score(attraction)
-
                 self.attractions.append(attraction)
                 success_count += 1
-                self._log(
-                    f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name} (评分: {attraction.recommendation_score:.1f})")
+                self._log(f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name}")
 
             except Exception as e:
                 fail_count += 1
@@ -205,38 +183,14 @@ class PlannerAgent:
 
         self._log(f"   📊 收集统计: 成功 {success_count} 个, 失败 {fail_count} 个")
 
-    def _calculate_recommendation_score(self, attraction: Attraction) -> float:
-        """计算景点推荐分数"""
-        score = 0.0
-
-        # 小红书热度（基于知识点热度分数）
-        xhs_data = attraction.get_context("raw_data.xiaohongshu")
-        if xhs_data and "information" in xhs_data:
-            information = xhs_data["information"]
-            if information:
-                avg_popularity = sum(
-                    info.get("popularity_score", 0)
-                    for info in information
-                ) / len(information)
-                score += min(avg_popularity / 100, 50)
-
-        # 有官网信息加分
-        if attraction.get_context("raw_data.official"):
-            score += 20
-
-        # 基础分数
-        score += 30
-
-        return min(score, 100)
-
-    async def _generate_trip_plan(
+    async def _generate_plan_with_llm(
             self,
             departure: str,
             destination: str,
             days: int
-    ) -> TripPlan:
+    ) -> str:
         """
-        生成旅行方案
+        使用 LLM 直接生成旅行方案
 
         Args:
             departure: 出发地
@@ -244,214 +198,56 @@ class PlannerAgent:
             days: 天数
 
         Returns:
-            旅行方案
+            格式化的旅行方案文本
         """
-        logger.info(f"   📝 生成{days}天行程方案...")
-        logger.info(f"   🏆 按推荐分数排序景点...")
+        logger.info("   🤖 调用 Google Gemini 生成旅行计划...")
 
-        # 按推荐分数排序景点
-        sorted_attractions = sorted(
-            self.attractions,
-            key=lambda x: x.recommendation_score,
-            reverse=True
-        )
+        # 准备景点数据摘要
+        attractions_summary = self._prepare_attractions_summary()
 
-        # 创建每日行程
-        logger.info(f"   📅 规划{days}天行程安排...")
-        daily_itineraries = []
-        attractions_per_day = max(1, len(sorted_attractions) // days) if sorted_attractions else 0
-
-        start_date = datetime.now().date()
-
-        for day in range(1, days + 1):
-            start_idx = (day - 1) * attractions_per_day
-            end_idx = start_idx + attractions_per_day
-
-            if day == days:
-                end_idx = len(sorted_attractions)
-
-            day_attractions = sorted_attractions[start_idx:end_idx]
-
-            # 生成当天行程描述
-            day_notes = self._generate_day_notes(day_attractions)
-            attraction_names = [attr.name for attr in day_attractions]
-
-            logger.info(f"      第{day}天: {', '.join(attraction_names) if attraction_names else '自由活动'}")
-
-            daily_itinerary = DailyItinerary(
-                day=day,
-                date=str(start_date + timedelta(days=day - 1)),
-                title=f"第{day}天行程",
-                morning=f"游览: {', '.join(attraction_names[:len(attraction_names) // 2]) if attraction_names else '自由活动'}",
-                afternoon=f"游览: {', '.join(attraction_names[len(attraction_names) // 2:]) if len(attraction_names) > 1 else '休息'}",
-                evening="品尝当地美食",
-                meals=["早餐：酒店", "午餐：景区附近", "晚餐：特色美食"],
-                accommodation="当地酒店",
-                notes="\n".join(day_notes) if day_notes else "注意提前预订门票"
-            )
-
-            daily_itineraries.append(daily_itinerary)
-
-        # 创建旅行方案
-        trip_plan = TripPlan(
-            plan_id=f"plan_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+        # 使用统一的提示词模板
+        prompt = PlannerPrompts.generate_trip_plan(
+            departure=departure,
             destination=destination,
-            title=f"{destination}{days}日游 (AI生成)"
+            days=days,
+            attractions_summary=attractions_summary
         )
 
-        # 设置用户偏好
-        trip_plan.set_user_preference("days", days)
-        trip_plan.set_user_preference("departure", departure)
+        # 配置并调用 Google Genai
+        genai.configure(api_key=settings.GOOGLE_API_KEY)
+        model = genai.GenerativeModel(settings.LLM_MODEL)
+        response = model.generate_content(prompt)
+        llm_output = response.text
 
-        # 添加收集的景点数据
-        for attr in sorted_attractions:
-            trip_plan.add_attraction(attr)
+        logger.info("   ✅ Google Gemini 生成完成")
 
-        # 设置 AI 规划内容
-        ai_planning = {
-            "itinerary": {
-                f"day{itinerary.day}": {
-                    "day": itinerary.day,
-                    "date": itinerary.date,
-                    "title": itinerary.title,
-                    "morning": itinerary.morning,
-                    "afternoon": itinerary.afternoon,
-                    "evening": itinerary.evening,
-                    "meals": itinerary.meals,
-                    "accommodation": itinerary.accommodation,
-                    "notes": itinerary.notes
-                }
-                for itinerary in daily_itineraries
-            },
-            "highlights": self._extract_highlights(sorted_attractions),
-            "tips": self._generate_tips(sorted_attractions),
-            "budget": {"estimated_total": len(sorted_attractions) * 100}  # 简单预估
-        }
-        trip_plan.set_ai_planning(ai_planning)
-
-        return trip_plan
-
-    def _generate_day_notes(self, attractions: List[Attraction]) -> List[str]:
-        """生成每日注意事项"""
-        notes = []
-
-        for attraction in attractions:
-            # 从 context 中获取小红书知识点
-            xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_information = xhs_data.get("information", [])[:2]
-
-            for info in xhs_information:
-                info_data = info.get("attraction_information", {})
-                content = extract_text_from_any(info_data)
-                if any(keyword in content for keyword in ["提前", "预约", "排队", "注意"]):
-                    snippet = content[:100]
-                    notes.append(f"{attraction.name}: {snippet}")
-
-            # 从 context 中获取官网信息
-            official_data = attraction.get_context("raw_data.official", {})
-            if official_data and "booking_info" in official_data:
-                notes.append(f"{attraction.name}: {official_data['booking_info']}")
-
-        return notes[:5]
-
-    def _extract_highlights(self, attractions: List[Attraction]) -> List[str]:
-        """提取行程亮点"""
-        highlights = []
-
-        for attraction in attractions[:3]:
-            # 从 context 中获取小红书知识点
-            xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_information = xhs_data.get("information", [])[:2]
-
-            for info in xhs_information:
-                info_data = info.get("attraction_information", {})
-                content = extract_text_from_any(info_data)
-                if any(word in content for word in ["必打卡", "绝美", "震撼", "推荐"]):
-                    highlights.append(f"{attraction.name}: {content[:50]}...")
-
-        return highlights
-
-    def _generate_tips(self, attractions: List[Attraction]) -> List[str]:
-        """生成旅行贴士"""
-        tips = [
-            "✅ 建议提前预订门票",
-            "✅ 注意景区开放时间",
-            "✅ 携带身份证和学生证（如有）",
-            "✅ 关注天气预报，做好防晒/防雨准备",
-            "🤖 本方案由AI智能生成，建议出发前再次核实信息"
-        ]
-
-        for attraction in attractions:
-            # 从 context 中获取小红书知识点
-            xhs_data = attraction.get_context("raw_data.xiaohongshu", {})
-            xhs_information = xhs_data.get("information", [])
-
-            for info in xhs_information:
-                info_data = info.get("attraction_information", {})
-                content = extract_text_from_any(info_data)
-                if "建议" in content or "攻略" in content:
-                    tips.append(f"{attraction.name}攻略详见小红书")
-                    break
-
-        return tips
-
-    def _format_plan(self, plan: TripPlan) -> str:
-        """格式化输出方案"""
+        # 格式化最终输出
         output = []
-
         output.append(f"\n{'=' * 60}")
-        output.append(f"  {plan.title}")
-        output.append(f"  🤖 Powered by Browser-Use AI")
+        output.append(f"  {destination}{days}日游 (AI生成)")
+        output.append(f"  🤖 Powered by Browser-Use AI + Google Gemini")
         output.append(f"{'=' * 60}\n")
-
-        # 从 context 中获取行程数据
-        itinerary_data = plan.get("ai_planning.itinerary", {})
-
-        for day_key in sorted(itinerary_data.keys()):
-            day_info = itinerary_data[day_key]
-            output.append(f"\n📅 第{day_info.get('day', '?')}天 ({day_info.get('date', '?')})")
-            output.append(f"   {day_info.get('title', '')}")
-            output.append("-" * 40)
-
-            if day_info.get('morning'):
-                output.append(f"  🌅 上午: {day_info['morning']}")
-            if day_info.get('afternoon'):
-                output.append(f"  ☀️  下午: {day_info['afternoon']}")
-            if day_info.get('evening'):
-                output.append(f"  🌙 晚上: {day_info['evening']}")
-
-            if day_info.get('meals'):
-                output.append(f"\n  🍽️  餐饮: {', '.join(day_info['meals'])}")
-
-            if day_info.get('accommodation'):
-                output.append(f"  🏨 住宿: {day_info['accommodation']}")
-
-            if day_info.get('notes'):
-                output.append(f"\n  💡 提示: {day_info['notes'][:100]}")
-
-        # 预算信息
-        budget = plan.get("ai_planning.budget", {})
-        if budget:
-            output.append(f"\n\n💰 预算估算")
-            output.append("-" * 40)
-            output.append(f"  预估总计: ¥{budget.get('estimated_total', 0):.0f}")
-
-        # 行程亮点
-        highlights = plan.get("ai_planning.highlights", [])
-        if highlights:
-            output.append(f"\n\n✨ 行程亮点")
-            output.append("-" * 40)
-            for highlight in highlights:
-                output.append(f"  • {highlight}")
-
-        # 旅行贴士
-        tips = plan.get("ai_planning.tips", [])
-        if tips:
-            output.append(f"\n\n💡 旅行贴士")
-            output.append("-" * 40)
-            for tip in tips:
-                output.append(f"  • {tip}")
-
+        output.append(llm_output)
         output.append(f"\n{'=' * 60}\n")
 
         return "\n".join(output)
+
+    def _prepare_attractions_summary(self) -> str:
+        """准备景点数据摘要供 LLM 使用"""
+        output = []
+
+        for attr in self.attractions:
+            output.append(f"\n## {attr.name}")
+            output.append("-" * 40)
+
+            # 小红书数据
+            xhs_data = attr.get_context("raw_data.xiaohongshu", {})
+            xhs_info = xhs_data.get("information", [])
+            if xhs_info:
+                output.append("**小红书知识点**:")
+                for idx, info in enumerate(xhs_info[:5], 1):  # 最多5条
+                    info_text = extract_text_from_any(info.get("attraction_information", ""))
+                    if info_text:
+                        output.append(f"{idx}. {info_text[:200]}")
+
+        return "\n".join(output) if output else "暂无详细数据"

@@ -125,90 +125,46 @@ class XHSPrompts:
 """
 
 
-
-
-class OfficialPrompts:
-    """官网爬虫提示词"""
+class PlannerPrompts:
+    """旅行规划 Agent 提示词"""
 
     @staticmethod
-    def get_official_info_with_links_task(attraction_name: str, collected_links: list) -> str:
-        """生成带参考链接的官网信息提取任务提示词"""
-        links_text = '\n'.join(['- ' + link for link in collected_links[:5]])
-        return f"""
-任务：查找并提取"{attraction_name}"的官方信息
+    def generate_trip_plan(departure: str, destination: str, days: int, attractions_summary: str) -> str:
+        """生成旅行规划提示词"""
+        return f"""你是一位专业的旅行规划师。请根据以下收集的旅行数据,生成一份详细、实用的旅行计划。
 
-已知参考链接（来自小红书用户）：
-{links_text}
+**旅行基本信息**:
+- 出发地: {departure}
+- 目的地: {destination}
+- 天数: {days} 天
 
-具体步骤：
-1. 逐个验证参考链接：
-   a. 使用 go_to_url 操作访问每个链接
-   b. 使用 wait 操作等待 2 秒确保页面加载
-   c. 使用 extract 操作检查是否为官方网站（查找 .gov.cn、官方域名或明确标识）
-2. 如果没有找到有效的官方网站：
-   a. 使用 go_to_url 操作访问: https://www.baidu.com
-   b. 使用 input 操作搜索: "{attraction_name} 官网"
-   c. 使用 click 操作点击第一个 .gov.cn 或官方域名结果
-3. 进入官方网站后：
-   a. 使用 extract 和 screenshot 操作提取以下信息：
-      - 官方网站URL
-      - 开放时间/营业时间
-      - 门票价格（成人票、学生票、儿童票等）
-      - 预订方式（网上预订、现场购票、公众号预约等）
-      - 详细地址
-      - 联系电话
-      - 景点简介/描述
+**收集的景点数据**:
+{attractions_summary}
 
-错误处理：
-- 如果 go_to_url 操作失败：使用 refresh 操作刷新，然后重试
-- 如果页面阻止访问：使用 go_back 操作返回并尝试参考列表中的下一个链接
-- 如果所有尝试后仍未找到官方网站：使用 search 操作搜索 "Google {attraction_name} 官网" 作为备选
+请生成一份包含以下内容的旅行计划:
 
-重要提示：
-- 避免第三方平台（携程、美团、去哪儿）
-- 优先选择 .gov.cn 或官方域名
-- 如果官方网站信息不完整：在输出中注明 "部分信息不可用"
+1. **每日详细行程**:
+   - 每天的具体安排(上午/下午/晚上)
+   - 游览时间建议
+   - 交通方式
+   - 用餐建议
 
-输出要求：
-- 使用 extract 操作输出结构化 JSON 格式
+2. **实用信息**:
+   - 每个景点的门票、开放时间等关键信息
+   - 交通攻略
+   - 注意事项和避坑指南
+
+3. **旅行贴士**: 实用的旅行建议
+
+4. **预算估算**: 大致的花费预估
+
+**输出要求**:
+- 使用 Markdown 格式
+- 结构清晰,便于阅读
+- 信息具体实用
+- 语气友好专业
 """
 
-    @staticmethod
-    def get_official_info_without_links_task(attraction_name: str) -> str:
-        """生成无参考链接的官网信息提取任务提示词"""
-        return f"""
-任务：查找并提取"{attraction_name}"的官方信息
 
-具体步骤：
-1. 使用 go_to_url 操作访问: https://www.baidu.com
-2. 使用 wait 操作等待 2-3 秒确保页面加载
-3. 使用 input 操作输入: "{attraction_name} 官网"
-4. 使用 send_keys 操作输入 "Enter" 提交搜索（或使用 click 操作点击搜索按钮）
-5. 使用 wait 操作等待 2 秒加载搜索结果
-6. 识别官方网站（优先选择 .gov.cn 或官方域名）
-7. 使用 click 操作打开官方网站
-   - 如果 click 操作失败：使用 send_keys 操作输入 "Tab Tab Enter" 进行导航
-8. 使用 wait 操作等待 3 秒确保官方网站加载完成
-9. 使用 extract 操作收集以下信息：
-   - 官方网站URL
-   - 开放时间/营业时间
-   - 门票价格（成人票、学生票、儿童票等）
-   - 预订方式（网上预订、现场购票、公众号预约等）
-   - 详细地址
-   - 联系电话
-   - 景点简介/描述
 
-错误处理：
-- 如果 input 操作失败：使用 send_keys 操作直接输入搜索词
-- 如果页面有弹窗/广告：使用 click 操作先关闭它们
-- 如果百度不可用：使用 go_to_url 操作访问必应（Bing.com）并重试搜索
-- 如果没有找到 .gov.cn 结果：使用 click 操作点击第一个看起来像官方的域名
 
-重要提示：
-- 在步骤之间使用 wait 操作（1-2 秒）模拟真实用户行为
-- 避免第三方平台（携程、美团、去哪儿）- 跳过这些结果
-- 优先级: .gov.cn > 官方域名 > 已验证来源
-
-输出要求：
-- 使用 extract 操作输出结构化 JSON 格式
-"""
