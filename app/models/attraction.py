@@ -38,37 +38,8 @@
     data = attraction.to_dict()
 """
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
-
-
-class XHSNote(BaseModel):
-    """小红书笔记数据模型"""
-    title: str = Field(description="笔记标题")
-    author: str = Field(default="", description="作者名称")
-    content: str = Field(default="", description="笔记正文内容")
-    likes: int = Field(default=0, description="点赞数")
-    collects: int = Field(default=0, description="收藏数")
-    comments: int = Field(default=0, description="评论数")
-    images: List[str] = Field(default_factory=list, description="图片URL列表")
-    url: str = Field(default="", description="笔记链接")
-    tags: List[str] = Field(default_factory=list, description="标签列表")
-    created_at: Optional[str] = Field(default=None, description="发布时间")
-
-
-class OfficialInfo(BaseModel):
-    """官方网站信息数据模型"""
-    name: str = Field(description="景点名称")
-    description: str = Field(default="", description="景点描述")
-    address: str = Field(default="", description="详细地址")
-    opening_hours: str = Field(default="", description="开放时间")
-    ticket_price: str = Field(default="", description="门票价格")
-    phone: str = Field(default="", description="联系电话")
-    website: str = Field(default="", description="官方网站URL")
-    booking_info: str = Field(default="", description="预订信息")
-    transportation: str = Field(default="", description="交通信息")
-    tips: List[str] = Field(default_factory=list, description="游玩提示")
 
 
 class Attraction:
