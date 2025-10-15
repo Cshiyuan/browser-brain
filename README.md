@@ -6,10 +6,6 @@
 
 ## 🎯 快速开始
 
-**新用户请查看**: [START_HERE.md](START_HERE.md) - 完整的入门指南
-
-**Web界面使用**: [WEB_USAGE.md](WEB_USAGE.md) - Web界面详细说明
-
 ### 一键启动 (推荐)
 
 ```bash
@@ -217,34 +213,6 @@ LLM_PROVIDER=anthropic
 LLM_MODEL=claude-3-sonnet-20240229
 ```
 
-### Browser-Use Cloud
-
-```bash
-# 使用云端浏览器(推荐生产环境)
-BROWSER_USE_CLOUD=true
-BROWSER_USE_API_KEY=your-key
-
-# 优势:
-# - 无需本地Chrome
-# - 更快的网络
-# - 自动扩展
-# - 内置代理
-```
-
-## 📊 性能指标
-
-| 指标 | Browser-Use AI |
-|------|----------------|
-| 开发时间 | 1天 |
-| 代码量 | ~500行 |
-| 维护成本 | 极低 |
-| 适应性 | ⭐⭐⭐⭐⭐ |
-| 成功率 | 85-90% |
-| 单个景点爬取时间 | 60-90秒 |
-
-**成本估算(基于OpenAI GPT-4.1-mini):**
-- 单个景点信息收集: 约 $0.10 - $0.20
-- 完整5景点规划: 约 $0.50 - $1.00
 
 ## 🏗️ 技术架构
 

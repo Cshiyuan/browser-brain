@@ -4,7 +4,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from app.scrapers.browser_use_scraper import BrowserUseScraper
-from app.scrapers.models import XHSInformationCollection, XHSAttractionInformation, DestinationGuide
+from app.scrapers.models import XHSAttractionInformationCollection, XHSAttractionInformation, XHSAttractionRecommendationCollection
 from app.models.prompts import XHSPrompts
 from app.utils.logger import setup_logger
 
@@ -38,7 +38,7 @@ class XHSScraper(BrowserUseScraper):
             logger.info(f"📍 STEP 2: 调用Browser-Use AI执行小红书爬取（尝试 {attempt + 1}/{max_retries}）")
             result = await self.scrape(
                 task=task,
-                output_model=XHSInformationCollection,
+                output_model=XHSAttractionInformationCollection,
                 max_steps=30
             )
 
@@ -86,7 +86,7 @@ class XHSScraper(BrowserUseScraper):
         logger.info(f"========== 小红书爬取完成 ==========")
         return info_data.information
 
-    async def search_destination_guide(self, destination: str, max_attractions: int = 5) -> DestinationGuide:
+    async def search_destination_guide(self, destination: str, max_attractions: int = 5) -> XHSAttractionRecommendationCollection:
         """
         搜索目的地旅游攻略，提取推荐景点列表
 
@@ -110,7 +110,7 @@ class XHSScraper(BrowserUseScraper):
             logger.info(f"📍 STEP 2: 调用Browser-Use AI执行目的地攻略爬取（尝试 {attempt + 1}/{max_retries}）")
             result = await self.scrape(
                 task=task,
-                output_model=DestinationGuide,
+                output_model=XHSAttractionRecommendationCollection,
                 max_steps=30
             )
 
@@ -125,12 +125,12 @@ class XHSScraper(BrowserUseScraper):
 
         if result["status"] != "success" or not result.get("is_successful"):
             logger.error(f"❌ AI爬取目的地攻略失败: {result.get('error', 'Unknown error')}")
-            return DestinationGuide(recommended_attractions=[], status="error", msg="爬取失败")
+            return XHSAttractionRecommendationCollection(recommended_attractions=[], status="error", msg="爬取失败")
 
         guide_data = result["data"]
         if not guide_data:
             logger.error("❌ AI未返回任何数据")
-            return DestinationGuide(recommended_attractions=[], status="error", msg="未返回数据")
+            return XHSAttractionRecommendationCollection(recommended_attractions=[], status="error", msg="未返回数据")
 
         logger.info(f"AI成功返回 {len(guide_data.recommended_attractions)} 个推荐景点")
         logger.info(f"📍 STEP 4: 提取景点名称列表 | attraction_count={len(guide_data.recommended_attractions)}")
@@ -172,7 +172,7 @@ class XHSScraper(BrowserUseScraper):
             """生成任务提示词"""
             return XHSPrompts.search_attraction_task(attraction_name, max_notes)
 
-        def parse_information(info_data: XHSInformationCollection) -> List[XHSAttractionInformation]:
+        def parse_information(info_data: XHSAttractionInformationCollection) -> List[XHSAttractionInformation]:
             """解析知识点数据"""
             return info_data.information
 
@@ -181,7 +181,7 @@ class XHSScraper(BrowserUseScraper):
             items=attractions,
             scrape_task_fn=create_task,
             parse_result_fn=parse_information,
-            output_model=XHSInformationCollection,
+            output_model=XHSAttractionInformationCollection,
             max_concurrent=max_concurrent,
             max_steps=30,
             item_label="景点"

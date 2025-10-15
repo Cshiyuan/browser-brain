@@ -10,9 +10,9 @@ from app.scrapers.xhs_scraper import XHSScraper
 # 导出爬虫数据模型
 from app.scrapers.models import (
     XHSAttractionInformation,
-    XHSInformationCollection,
+    XHSAttractionInformationCollection,
     XHSAttractionRecommendation,
-    DestinationGuide,
+    XHSAttractionRecommendationCollection,
 )
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     "XHSScraper",
     # 数据模型
     "XHSAttractionInformation",
-    "XHSInformationCollection",
+    "XHSAttractionInformationCollection",
     "XHSAttractionRecommendation",
-    "DestinationGuide",
+    "XHSAttractionRecommendationCollection",
 ]

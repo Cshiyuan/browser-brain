@@ -2,7 +2,7 @@
 from typing import List, Any
 import google.generativeai as genai
 
-from app.scrapers import DestinationGuide
+from app.scrapers import XHSAttractionRecommendationCollection
 from app.scrapers.xhs_scraper import XHSScraper
 from app.models.attraction import Attraction
 from app.models.prompts import PlannerPrompts
@@ -18,12 +18,8 @@ class PlannerAgent:
     def __init__(self, headless: bool = None):
         """
         初始化规划Agent
-
         Args:
             headless: 是否无头模式（None则使用配置文件）
-
-        注意:
-            不再需要传递 log_callback，使用全局 log_manager 管理日志
         """
         self.headless = headless if headless is not None else settings.HEADLESS
         self.attractions: List[Attraction] = []
@@ -46,10 +42,6 @@ class PlannerAgent:
         self.active_scrapers.clear()
         logger.info("✅ 所有 Scraper 资源清理完成")
 
-    def _log(self, message: str):
-        """内部日志方法"""
-        logger.info(message)
-
     async def plan_trip(
             self,
             departure: str,
@@ -69,17 +61,17 @@ class PlannerAgent:
         Returns:
             旅行方案文本
         """
-        self._log("=" * 60)
-        self._log(f"🚀 开始AI驱动旅行规划")
-        self._log(f"   出发地: {departure}")
-        self._log(f"   目的地: {destination}")
-        self._log(f"   天数: {days}天")
-        self._log(f"   必去景点: {must_visit if must_visit else '无（自动规划）'}")
-        self._log("=" * 60)
+        logger.info("=" * 60)
+        logger.info(f"🚀 开始AI驱动旅行规划")
+        logger.info(f"   出发地: {departure}")
+        logger.info(f"   目的地: {destination}")
+        logger.info(f"   天数: {days}天")
+        logger.info(f"   必去景点: {must_visit if must_visit else '无（自动规划）'}")
+        logger.info("=" * 60)
 
         try:
             # 步骤1: 使用AI收集景点信息
-            self._log("📍 [步骤1/2] 开始收集景点信息...")
+            logger.info("📍 [步骤1/2] 开始收集景点信息...")
 
             # 补充爬取景点
             if not must_visit:
@@ -89,18 +81,18 @@ class PlannerAgent:
 
             # 根据景点，并发拉取数据
             await self._collect_attractions(destination, must_visit)
-            self._log(f"✅ [步骤1/2] 完成，收集到 {len(self.attractions)} 个景点")
+            logger.info(f"✅ [步骤1/2] 完成，收集到 {len(self.attractions)} 个景点")
 
             # 步骤2: 使用 LLM 生成旅行方案
-            self._log("🤖 [步骤2/2] 使用 LLM 生成旅行方案...")
+            logger.info("🤖 [步骤2/2] 使用 LLM 生成旅行方案...")
             result = await self._generate_plan_with_llm(
                 departure=departure,
                 destination=destination,
                 days=days
             )
-            self._log("✅ [步骤2/2] 旅行方案生成完成")
-            self._log("🎉 旅行规划全部完成！")
-            self._log("=" * 60)
+            logger.info("✅ [步骤2/2] 旅行方案生成完成")
+            logger.info("🎉 旅行规划全部完成！")
+            logger.info("=" * 60)
             return result
 
         except Exception as e:
@@ -112,8 +104,8 @@ class PlannerAgent:
             # 确保清理所有 scraper 资源
             await self._cleanup_all_scrapers()
 
-    async def _collect_destination(self, destination: str) -> DestinationGuide | None:
-        self._log(f"   🔍 搜索 {destination} 的旅游攻略...")
+    async def _collect_destination(self, destination: str) -> XHSAttractionRecommendationCollection | None:
+        logger.info(f"   🔍 搜索 {destination} 的旅游攻略...")
         # 创建临时爬虫实例用于搜索攻略
         xhs_scraper = XHSScraper(
             headless=self.headless,
@@ -127,10 +119,10 @@ class PlannerAgent:
             max_attractions=5  # 默认提取5个推荐景点
         )
         if not guide_data.recommended_attractions:
-            self._log("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
+            logger.info("   ⚠️  未能从攻略中提取到推荐景点，将自动收集景点方案")
             return None
 
-        self._log(
+        logger.info(
             f"   ✅ 成功从攻略中提取 {len(guide_data.recommended_attractions)} 个推荐景点: {guide_data.recommended_attractions}")
         # 使用提取的景点作为必去景点
         return guide_data
@@ -139,7 +131,7 @@ class PlannerAgent:
         """使用批量方法并发收集景点信息"""
 
         # 步骤1: 批量爬取小红书数据
-        self._log(f"   📱 步骤1: 批量爬取小红书数据...")
+        logger.info(f"   📱 步骤1: 批量爬取小红书数据...")
         xhs_scraper = XHSScraper(headless=self.headless)
         # 注册到活跃列表
         self.active_scrapers.append(xhs_scraper)
@@ -150,16 +142,16 @@ class PlannerAgent:
             max_concurrent=3  # 最多3个并发
         )
 
-        self._log(f"   ✅ 小红书数据收集完成: {len(xhs_results)} 个景点")
+        logger.info(f"   ✅ 小红书数据收集完成: {len(xhs_results)} 个景点")
 
         # 步骤2: 构建景点对象
-        self._log(f"   📦 步骤2: 构建景点数据...")
+        logger.info(f"   📦 步骤2: 构建景点数据...")
         success_count = 0
         fail_count = 0
 
         for idx, attraction_name in enumerate(must_visit, 1):
             try:
-                self._log(f"   📍 [{idx}/{len(must_visit)}] 构建景点: {attraction_name}")
+                logger.info(f"   📍 [{idx}/{len(must_visit)}] 构建景点: {attraction_name}")
 
                 # 获取小红书知识点
                 xhs_information = xhs_results.get(attraction_name, [])
@@ -175,13 +167,13 @@ class PlannerAgent:
 
                 self.attractions.append(attraction)
                 success_count += 1
-                self._log(f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name}")
+                logger.info(f"   ✅ [{idx}/{len(must_visit)}] 成功: {attraction_name}")
 
             except Exception as e:
                 fail_count += 1
-                self._log(f"   ❌ [{idx}/{len(must_visit)}] 失败: {attraction_name} - {e}")
+                logger.info(f"   ❌ [{idx}/{len(must_visit)}] 失败: {attraction_name} - {e}")
 
-        self._log(f"   📊 收集统计: 成功 {success_count} 个, 失败 {fail_count} 个")
+        logger.info(f"   📊 收集统计: 成功 {success_count} 个, 失败 {fail_count} 个")
 
     async def _generate_plan_with_llm(
             self,

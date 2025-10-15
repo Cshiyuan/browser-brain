@@ -17,7 +17,7 @@ class XHSAttractionInformation(BaseModel):
     popularity_score: int = Field(default=0, description="热度分数（根据点赞、收藏计算）")
 
 
-class XHSInformationCollection(BaseModel):
+class XHSAttractionInformationCollection(BaseModel):
     """小红书笔记集合（Browser-Use AI 返回的数据结构）"""
     information: List[XHSAttractionInformation] = Field(description="信息列表")
 
@@ -30,7 +30,7 @@ class XHSAttractionRecommendation(BaseModel):
     recommended_extra_info: str = Field(default="", description="景点的额外信息")
 
 
-class DestinationGuide(BaseModel):
+class XHSAttractionRecommendationCollection(BaseModel):
     """目的地旅游攻略（Browser-Use AI 返回的数据结构）"""
     recommended_attractions: List[XHSAttractionRecommendation] = Field(description="推荐景点列表")
     status: str = Field(description="执行状态（success/captcha/login）")
