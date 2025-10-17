@@ -161,7 +161,7 @@ class PlannerAgent:
 
                 # 添加小红书知识点数据
                 attraction.add_raw_data("xiaohongshu", {
-                    "information": [info.dict() for info in xhs_information],
+                    "information": [info.model_dump() for info in xhs_information],
                     "total_count": len(xhs_information)
                 })
 
@@ -214,13 +214,14 @@ class PlannerAgent:
         logger.info("   ✅ Google Gemini 生成完成")
 
         # 格式化最终输出
-        output = []
-        output.append(f"\n{'=' * 60}")
-        output.append(f"  {destination}{days}日游 (AI生成)")
-        output.append(f"  🤖 Powered by Browser-Use AI + Google Gemini")
-        output.append(f"{'=' * 60}\n")
-        output.append(llm_output)
-        output.append(f"\n{'=' * 60}\n")
+        output = [
+            f"\n{'=' * 60}",
+            f"  {destination}{days}日游 (AI生成)",
+            f"  🤖 Powered by Browser-Use AI + Google Gemini",
+            f"{'=' * 60}\n",
+            llm_output,
+            f"\n{'=' * 60}\n"
+        ]
 
         return "\n".join(output)
 

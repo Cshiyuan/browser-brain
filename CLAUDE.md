@@ -91,12 +91,10 @@ browser-brain/
 │   ├── scrapers/
 │   │   ├── models.py              # 爬虫数据模型（AI 返回结构）
 │   │   ├── browser_use_scraper.py # AI 爬虫基类
-│   │   ├── xhs_scraper.py         # 小红书爬虫
-│   │   └── official_scraper.py    # 官网爬虫
+│   │   └──xhs_scraper.py         # 小红书爬虫
 │   ├── models/
 │   │   ├── prompts.py             # AI 提示词统一管理
 │   │   ├── attraction.py          # 景点数据模型（业务模型）
-│   │   └── trip_plan.py           # 旅行方案模型
 │   └── utils/
 │       └── logger.py              # 日志工具
 ├── frontend/
@@ -294,7 +292,6 @@ KISS 原则强调：
 - 后端核心: `app/agents/planner_agent.py`
 - AI 爬虫基类: `app/scrapers/browser_use_scraper.py`
 - 小红书爬虫: `app/scrapers/xhs_scraper.py`
-- 官网爬虫: `app/scrapers/official_scraper.py`
 - 提示词模型: `app/models/prompts.py`
 - 数据模型: `app/models/attraction.py`
 

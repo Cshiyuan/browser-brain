@@ -18,10 +18,10 @@ class BrowserUseScraper:
     """Browser-Use AI驱动的爬虫基类"""
 
     def __init__(
-        self,
-        headless: bool = None,
-        fast_mode: bool = False,
-        keep_alive: bool = False
+            self,
+            headless: bool = None,
+            fast_mode: bool = False,
+            keep_alive: bool = False
     ):
         """
         初始化Browser-Use爬虫
@@ -36,8 +36,6 @@ class BrowserUseScraper:
         self.llm = LLMFactory.create_llm()
         self.active_sessions: List[Any] = []  # 追踪活跃的浏览器会话
         self._sessions_lock = asyncio.Lock()  # 并发保护锁
-
-
 
     def create_browser_profile(self, window_config: Optional[Dict] = None) -> BrowserProfile:
         """
@@ -104,7 +102,7 @@ class BrowserUseScraper:
             "storage_state": str(storage_state_path),
             "keep_alive": self.keep_alive,
             "headless": self.headless,
-            "dom_highlight_elements": True,
+            "dom_highlight_elements": False,  ## True的话，影响速度
             "disable_security": False,
             "user_data_dir": str(user_data_path),
             "args": browser_args,
@@ -123,11 +121,10 @@ class BrowserUseScraper:
         logger.info(f"✓ 浏览器配置创建完成（{mode_desc}）")
         return profile
 
-
     def calculate_window_layout(
-        self,
-        index: int,
-        total_windows: int
+            self,
+            index: int,
+            total_windows: int
     ) -> Optional[Dict]:
         """
         根据窗口总数智能计算窗口布局（有头模式）
@@ -146,7 +143,8 @@ class BrowserUseScraper:
             import screeninfo
             screen = screeninfo.get_monitors()[0]
             screen_width, screen_height = screen.width, screen.height
-        except Exception:
+        except (ImportError, ModuleNotFoundError, IndexError) as ex:
+            logger.debug(f"无法获取屏幕信息，使用默认值: {ex}")
             screen_width, screen_height = 1920, 1080
 
         # 布局参数
@@ -195,14 +193,14 @@ class BrowserUseScraper:
         }
 
     async def scrape_batch(
-        self,
-        items: List[str],
-        scrape_task_fn: Callable[[str], str],
-        parse_result_fn: Callable[[Any], T],
-        output_model: type[BaseModel],
-        max_concurrent: int = 5,
-        max_steps: int = 30,
-        item_label: str = "item"
+            self,
+            items: List[str],
+            scrape_task_fn: Callable[[str], str],
+            parse_result_fn: Callable[[Any], T],
+            output_model: type[BaseModel],
+            max_concurrent: int = 5,
+            max_steps: int = 30,
+            item_label: str = "item"
     ) -> Dict[str, T]:
         """
         通用批量并发爬取方法
@@ -228,49 +226,49 @@ class BrowserUseScraper:
         # 创建窗口位置池（预先计算好所有位置）
         position_pool: asyncio.Queue = asyncio.Queue()
         for i in range(max_concurrent):
-            window_config = self.calculate_window_layout(i, max_concurrent)
-            await position_pool.put(window_config)
+            position = self.calculate_window_layout(i, max_concurrent)
+            await position_pool.put(position)
         logger.info(f"   ✓ 窗口位置池初始化完成（{max_concurrent} 个位置）")
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def scrape_with_semaphore(item_name: str):
+        async def scrape_with_semaphore(name: str):
             """为单个项目爬取（复用 scrape() 方法）"""
             # 从池中借用窗口位置
-            window_config = await position_pool.get()
+            borrowed_position = await position_pool.get()
             try:
                 async with semaphore:
-                    logger.info(f"📍 开始爬取: {item_name}")
+                    logger.info(f"📍 开始爬取: {name}")
 
                     # 生成任务
-                    task = scrape_task_fn(item_name)
+                    task = scrape_task_fn(name)
 
                     # 调用 scrape() 方法
-                    result = await self.scrape(
+                    scrape_result = await self.scrape(
                         task=task,
                         output_model=output_model,
                         max_steps=max_steps,
                         use_vision=False,  # 禁用视觉能力以避免截图超时
-                        window_config=window_config
+                        window_config=borrowed_position
                     )
 
                     # 解析结果（即使 is_successful=False，只要有数据就接受）
-                    if result["status"] == "success" and result.get("data"):
-                        parsed_result = parse_result_fn(result["data"])
+                    if scrape_result["status"] == "success" and scrape_result.get("data"):
+                        parsed_result = parse_result_fn(scrape_result["data"])
 
                         # 检查是否完全成功
-                        if result.get("is_successful"):
-                            logger.info(f"   ✅ 完全成功: {item_name}")
+                        if scrape_result.get("is_successful"):
+                            logger.info(f"   ✅ 完全成功: {name}")
                         else:
-                            logger.warning(f"   ⚠️  部分成功: {item_name}（AI 未完成全部目标，但已返回部分数据）")
+                            logger.warning(f"   ⚠️  部分成功: {name}（AI 未完成全部目标，但已返回部分数据）")
 
-                        return item_name, parsed_result
+                        return name, parsed_result
                     else:
-                        logger.warning(f"   ❌ 失败: {item_name}")
-                        return item_name, None
+                        logger.warning(f"   ❌ 失败: {name}")
+                        return name, None
             finally:
                 # 归还窗口位置到池中
-                await position_pool.put(window_config)
+                await position_pool.put(borrowed_position)
 
         # 并发执行
         tasks = [scrape_with_semaphore(name) for name in items]
@@ -281,19 +279,19 @@ class BrowserUseScraper:
         success_count = 0
         fail_count = 0
 
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(f"   任务异常: {result}")
+        for gather_result in results:
+            if isinstance(gather_result, Exception):
+                logger.error(f"   任务异常: {gather_result}")
                 fail_count += 1
-            elif isinstance(result, tuple) and len(result) == 2:
-                item_name, parsed_data = result
+            elif isinstance(gather_result, tuple) and len(gather_result) == 2:
+                item_name, parsed_data = gather_result
                 result_dict[item_name] = parsed_data
                 if parsed_data is not None:
                     success_count += 1
                 else:
                     fail_count += 1
             else:
-                logger.error(f"   结果格式异常: {result}")
+                logger.error(f"   结果格式异常: {gather_result}")
                 fail_count += 1
 
         logger.info("=" * 60)
@@ -303,7 +301,8 @@ class BrowserUseScraper:
 
         return result_dict
 
-    def _log_agent_steps(self, history):
+    @staticmethod
+    def _log_agent_steps(history):
         """详细记录 Agent 执行的每一步"""
         logger.info("=" * 60)
         logger.info("🔍 AI Agent 执行步骤详情")
@@ -367,7 +366,7 @@ class BrowserUseScraper:
             task: str,
             output_model: Optional[type[BaseModel]] = None,
             max_steps: int = 20,
-            use_vision: bool | Literal['auto']  = False,  # 默认禁用视觉能力
+            use_vision: bool | Literal['auto'] = False,  # 默认禁用视觉能力
             window_config: Optional[Dict] = None
     ) -> dict:
         """
@@ -510,5 +509,3 @@ class BrowserUseScraper:
                 logger.warning(f"   ⚠️ [{i}/{len(sessions_to_close)}] 关闭会话警告: {e}")
 
         logger.info("✅ 浏览器资源清理完成")
-
-

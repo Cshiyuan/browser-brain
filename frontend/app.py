@@ -5,15 +5,16 @@ import streamlit as st
 import asyncio
 import sys
 import json
-import os
 from pathlib import Path
 from datetime import datetime, timedelta
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.agents.planner_agent import PlannerAgent
-from app.utils.logger import setup_logger, add_global_callback, remove_global_callback
+# noinspection PyUnresolvedReferences
+from app.agents.planner_agent import PlannerAgent  # noqa: E402
+# noinspection PyUnresolvedReferences
+from app.utils.logger import setup_logger, add_global_callback, remove_global_callback  # noqa: E402
 
 logger = setup_logger(__name__)
 
@@ -229,31 +230,34 @@ with st.expander("🔧 高级选项"):
 st.divider()
 
 # 日志过滤函数
-def filter_logs(logs, levels):
+# noinspection PyShadowingNames
+def filter_logs(log_list, filter_levels):  # pylint: disable=redefined-outer-name
     """根据日志级别过滤日志"""
-    if not levels:
-        return logs
-    filtered = []
-    for log in logs:
-        for level in levels:
-            if level in log or (level == "INFO" and not any(l in log for l in ["DEBUG", "WARNING", "ERROR"])):
-                filtered.append(log)
+    if not filter_levels:
+        return log_list
+    filtered_results = []
+    error_levels = ["DEBUG", "WARNING", "ERROR"]
+    for log_entry in log_list:
+        # noinspection PyShadowingNames
+        for level in filter_levels:
+            if level in log_entry or (level == "INFO" and not any(err_level in log_entry for err_level in error_levels)):
+                filtered_results.append(log_entry)
                 break
-    return filtered
+    return filtered_results
 
 # 日志颜色标记函数
-def colorize_log(log):
+def colorize_log(log_entry):
     """为不同级别的日志添加颜色标记"""
-    if "ERROR" in log or "❌" in log:
-        return f"🔴 {log}"
-    elif "WARNING" in log or "⚠️" in log:
-        return f"🟡 {log}"
-    elif "DEBUG" in log:
-        return f"🔵 {log}"
-    elif "✅" in log or "成功" in log:
-        return f"🟢 {log}"
+    if "ERROR" in log_entry or "❌" in log_entry:
+        return f"🔴 {log_entry}"
+    elif "WARNING" in log_entry or "⚠️" in log_entry:
+        return f"🟡 {log_entry}"
+    elif "DEBUG" in log_entry:
+        return f"🔵 {log_entry}"
+    elif "✅" in log_entry or "成功" in log_entry:
+        return f"🟢 {log_entry}"
     else:
-        return f"⚪ {log}"
+        return f"⚪ {log_entry}"
 
 # 开始规划按钮
 if st.button("🚀 开始智能规划", type="primary"):
@@ -284,7 +288,7 @@ if st.button("🚀 开始智能规划", type="primary"):
                 st.session_state.planning_logs.append(message)
                 # 实时更新日志显示
                 filtered = filter_logs(st.session_state.planning_logs, log_levels)
-                colored_logs = [colorize_log(log) for log in filtered[-50:]]  # 最新50条
+                colored_logs = [colorize_log(log_item) for log_item in filtered[-50:]]  # 最新50条
                 log_container.text("\n".join(colored_logs))
 
             # 注册全局回调（所有 logger 共享）
@@ -358,8 +362,8 @@ if st.button("🚀 开始智能规划", type="primary"):
                 if st.session_state.planning_logs:
                     with st.expander("📋 查看日志"):
                         st.markdown('<div class="log-box">', unsafe_allow_html=True)
-                        for log in st.session_state.planning_logs:
-                            st.text(log)
+                        for log_item in st.session_state.planning_logs:
+                            st.text(log_item)
                         st.markdown('</div>', unsafe_allow_html=True)
             else:
                 # 显示结果
@@ -432,8 +436,8 @@ if st.button("🚀 开始智能规划", type="primary"):
                     if st.session_state.planning_logs:
                         filtered_logs = filter_logs(st.session_state.planning_logs, filter_levels)
                         st.markdown('<div class="log-box">', unsafe_allow_html=True)
-                        for log in filtered_logs:
-                            colored_log = colorize_log(log)
+                        for log_item in filtered_logs:
+                            colored_log = colorize_log(log_item)
                             st.text(colored_log)
                         st.markdown('</div>', unsafe_allow_html=True)
                         st.caption(f"共 {len(filtered_logs)} 条日志（过滤前: {len(st.session_state.planning_logs)} 条）")
@@ -553,8 +557,8 @@ if st.session_state.current_plan and not st.button("🚀 开始智能规划", ty
         if logs:
             filtered_logs = filter_logs(logs, filter_levels_history)
             st.markdown('<div class="log-box">', unsafe_allow_html=True)
-            for log in filtered_logs:
-                colored_log = colorize_log(log)
+            for log_item in filtered_logs:
+                colored_log = colorize_log(log_item)
                 st.text(colored_log)
             st.markdown('</div>', unsafe_allow_html=True)
             st.caption(f"共 {len(filtered_logs)} 条日志（过滤前: {len(logs)} 条）")

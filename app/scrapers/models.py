@@ -3,7 +3,7 @@
 所有爬虫使用的Pydantic模型都在这里定义，包括：
 - 小红书相关模型（XHSNoteOutput, XHSNotesCollection, AttractionRecommendation, DestinationGuide）
 """
-from typing import List, Dict, Any
+from typing import List
 from pydantic import BaseModel, Field
 
 
